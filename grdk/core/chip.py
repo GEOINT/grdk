@@ -8,8 +8,11 @@ whether the object/signature of interest is present in the chip.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------

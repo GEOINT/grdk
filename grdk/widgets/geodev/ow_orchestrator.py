@@ -12,8 +12,11 @@ orange-widget-base
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -31,8 +34,11 @@ Modified
 """
 
 # Standard library
+import logging
 import traceback
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # Third-party
 import numpy as np
@@ -44,9 +50,11 @@ from AnyQt.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -55,23 +63,10 @@ from AnyQt.QtGui import QImage, QPixmap
 from AnyQt.QtCore import Qt, QTimer
 
 # GRDK internal
+from grdk.core.discovery import discover_processors, get_processor_tags
 from grdk.core.gpu import GpuBackend
 from grdk.core.workflow import ProcessingStep, WorkflowDefinition
 from grdk.widgets._signals import ChipSetSignal, ProcessingPipelineSignal
-
-
-def _discover_processors() -> Dict[str, Any]:
-    """Discover available GRDL ImageTransform/Detector classes."""
-    processors: Dict[str, Any] = {}
-    try:
-        import grdl.image_processing as ip
-        import inspect
-        for name, obj in inspect.getmembers(ip, inspect.isclass):
-            if hasattr(obj, 'apply') and not inspect.isabstract(obj):
-                processors[name] = obj
-    except ImportError:
-        pass
-    return processors
 
 
 def _array_to_pixmap(arr: np.ndarray, size: int = 256) -> QPixmap:
@@ -129,12 +124,13 @@ class OWOrchestrator(OWBaseWidget):
     def __init__(self) -> None:
         super().__init__()
 
-        self._processors = _discover_processors()
+        self._processors = discover_processors()
         self._workflow = WorkflowDefinition(name="New Workflow")
         self._chip_set: Optional[Any] = None
         self._selected_chip_index = 0
         self._gpu = GpuBackend()
         self._step_param_controls: List[Dict[str, Any]] = []
+        self._preview_running = False  # Execution lock
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(50)  # 50ms debounce
@@ -160,8 +156,16 @@ class OWOrchestrator(OWBaseWidget):
         left = QWidget()
         left.setLayout(QVBoxLayout())
         left.layout().addWidget(QLabel("Component Palette"))
+
+        # Search filter
+        self._palette_filter = QLineEdit()
+        self._palette_filter.setPlaceholderText("Filter processors...")
+        self._palette_filter.textChanged.connect(self._on_filter_palette)
+        left.layout().addWidget(self._palette_filter)
+
         self._palette_list = QListWidget()
-        for name in sorted(self._processors.keys()):
+        self._all_processor_names = sorted(self._processors.keys())
+        for name in self._all_processor_names:
             item = QListWidgetItem(name)
             self._palette_list.addItem(item)
         left.layout().addWidget(self._palette_list)
@@ -174,6 +178,18 @@ class OWOrchestrator(OWBaseWidget):
         # Center panel: Workflow steps
         center = QWidget()
         center.setLayout(QVBoxLayout())
+
+        # Workflow name editor
+        name_row = QWidget()
+        name_row.setLayout(QHBoxLayout())
+        name_row.layout().addWidget(QLabel("Name:"))
+        self._workflow_name_edit = QLineEdit("New Workflow")
+        self._workflow_name_edit.textChanged.connect(
+            lambda t: setattr(self._workflow, 'name', t)
+        )
+        name_row.layout().addWidget(self._workflow_name_edit)
+        center.layout().addWidget(name_row)
+
         center.layout().addWidget(QLabel("Workflow Steps"))
         self._steps_list = QListWidget()
         self._steps_list.currentRowChanged.connect(self._on_step_selected)
@@ -202,6 +218,17 @@ class OWOrchestrator(OWBaseWidget):
         right = QWidget()
         right.setLayout(QVBoxLayout())
         right.layout().addWidget(QLabel("Preview"))
+
+        # Chip selector
+        chip_row = QWidget()
+        chip_row.setLayout(QHBoxLayout())
+        chip_row.layout().addWidget(QLabel("Chip:"))
+        self._chip_spinbox = QSpinBox()
+        self._chip_spinbox.setMinimum(0)
+        self._chip_spinbox.setMaximum(0)
+        self._chip_spinbox.valueChanged.connect(self._on_chip_selected)
+        chip_row.layout().addWidget(self._chip_spinbox)
+        right.layout().addWidget(chip_row)
 
         self._before_label = QLabel("Before")
         self._before_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -240,6 +267,8 @@ class OWOrchestrator(OWBaseWidget):
         self.Warning.no_chips.clear()
         self._chip_set = signal.chip_set
         self._selected_chip_index = 0
+        self._chip_spinbox.setMaximum(max(0, len(signal.chip_set) - 1))
+        self._chip_spinbox.setValue(0)
         self._schedule_preview()
 
     def _on_add_step(self) -> None:
@@ -350,15 +379,46 @@ class OWOrchestrator(OWBaseWidget):
 
         layout.addWidget(group)
 
+    def _on_filter_palette(self, text: str) -> None:
+        """Filter the processor palette by search text.
+
+        Matches against processor name, category, and modalities so
+        users can type e.g. "SAR" or "contrast" to find relevant processors.
+        """
+        self._palette_list.clear()
+        query = text.lower()
+        for name in self._all_processor_names:
+            if query in name.lower():
+                self._palette_list.addItem(QListWidgetItem(name))
+                continue
+            # Also match against processor tags
+            proc_cls = self._processors.get(name)
+            if proc_cls is not None:
+                tags = get_processor_tags(proc_cls)
+                cat = (tags.get('category') or '').lower()
+                mods = ' '.join(tags.get('modalities', ())).lower()
+                if query in cat or query in mods:
+                    self._palette_list.addItem(QListWidgetItem(name))
+
+    def _on_chip_selected(self, index: int) -> None:
+        """Handle chip selector change."""
+        self._selected_chip_index = index
+        self._schedule_preview()
+
     def _schedule_preview(self) -> None:
         """Debounced preview update."""
-        self._preview_timer.start()
+        if not self._preview_running:
+            self._preview_timer.start()
 
     def _update_preview(self) -> None:
         """Run the current pipeline on the selected chip and display result."""
+        if self._preview_running:
+            return
+        self._preview_running = True
         self._error_label.setText("")
 
         if self._chip_set is None or len(self._chip_set) == 0:
+            self._preview_running = False
             return
 
         chip = self._chip_set[self._selected_chip_index]
@@ -369,6 +429,7 @@ class OWOrchestrator(OWBaseWidget):
 
         if not self._workflow.steps:
             self._after_image.setPixmap(_array_to_pixmap(source))
+            self._preview_running = False
             return
 
         # Run pipeline
@@ -381,11 +442,14 @@ class OWOrchestrator(OWBaseWidget):
                 proc = proc_class()
                 result = self._gpu.apply_transform(proc, result, **step.params)
         except Exception as e:
+            logger.error("Preview pipeline failed: %s", e)
             self._error_label.setText(f"Error: {e}")
             self._after_image.setPixmap(_array_to_pixmap(source))
+            self._preview_running = False
             return
 
         self._after_image.setPixmap(_array_to_pixmap(result))
+        self._preview_running = False
 
     def _on_emit(self) -> None:
         """Emit the current workflow as a ProcessingPipeline signal."""

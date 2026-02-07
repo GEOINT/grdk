@@ -8,8 +8,11 @@ representations.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -96,12 +99,36 @@ def chip_stack_at_polygon(
     chips = []
     for i, reader in enumerate(readers):
         try:
+            # Transform polygon to this image's native space if registered
+            img_polygon = polygon
+            if registration_results and i < len(registration_results):
+                result = registration_results[i]
+                if result is not None and hasattr(result, 'transform_matrix'):
+                    H = result.transform_matrix
+                    try:
+                        H_inv = np.linalg.inv(
+                            H if H.shape == (3, 3) else np.vstack([H, [0, 0, 1]])
+                        )
+                        # Transform (row, col) vertices through inverse homography
+                        ones = np.ones((polygon.shape[0], 1))
+                        # polygon is (N, 2) as (row, col) → homogeneous (col, row, 1)
+                        pts_h = np.hstack([
+                            polygon[:, 1:2], polygon[:, 0:1], ones
+                        ])  # (N, 3) as (x, y, 1)
+                        warped = (H_inv @ pts_h.T).T
+                        warped = warped[:, :2] / warped[:, 2:3]
+                        img_polygon = np.column_stack([warped[:, 1], warped[:, 0]])
+                    except np.linalg.LinAlgError:
+                        pass  # Use original polygon if inversion fails
+
+            local_rs, local_re, local_cs, local_ce = polygon_bounding_box(img_polygon)
+
             shape = reader.get_shape()
             # Clamp to image bounds
-            rs = max(0, row_start)
-            re = min(shape[0], row_end)
-            cs = max(0, col_start)
-            ce = min(shape[1], col_end)
+            rs = max(0, local_rs)
+            re = min(shape[0], local_re)
+            cs = max(0, local_cs)
+            ce = min(shape[1], local_ce)
 
             if re <= rs or ce <= cs:
                 continue

@@ -14,8 +14,11 @@ torch (optional, for ML model inference)
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -33,10 +36,13 @@ Modified
 """
 
 # Standard library
+import logging
 from typing import Any, Dict, Optional, Union
 
 # Third-party
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 def _check_cupy() -> bool:
@@ -159,13 +165,24 @@ class GpuBackend:
             Transformed image (always on CPU).
         """
         if self._cupy_available:
-            try:
-                gpu_source = self.to_gpu(source)
-                result = transform.apply(gpu_source, **kwargs)
-                return self.to_cpu(result)
-            except Exception:
-                # Fall back to CPU if GPU execution fails
-                pass
+            # Check GRDL __gpu_compatible__ flag — skip GPU for
+            # scipy-dependent processors that will always fail.
+            gpu_ok = getattr(transform, '__gpu_compatible__', None)
+            if gpu_ok is False:
+                logger.debug(
+                    "Skipping GPU for %s (__gpu_compatible__=False)",
+                    type(transform).__name__,
+                )
+            else:
+                try:
+                    gpu_source = self.to_gpu(source)
+                    result = transform.apply(gpu_source, **kwargs)
+                    return self.to_cpu(result)
+                except Exception as e:
+                    logger.warning(
+                        "GPU execution failed for %s, falling back to CPU: %s",
+                        type(transform).__name__, e,
+                    )
 
         return transform.apply(source, **kwargs)
 

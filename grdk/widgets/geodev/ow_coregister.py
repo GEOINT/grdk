@@ -12,8 +12,11 @@ orange-widget-base
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -100,6 +103,8 @@ class OWCoRegister(OWBaseWidget):
         # Algorithm selector
         box.layout().addWidget(QLabel("Algorithm:"))
         self._algo_combo = QComboBox(self)
+        self._algo_combo.addItem("Affine (Control Points)", "affine")
+        self._algo_combo.addItem("Projective (Homography)", "projective")
         self._algo_combo.addItem("Feature Match (ORB)", "feature_match_orb")
         self._algo_combo.addItem("Feature Match (SIFT)", "feature_match_sift")
         box.layout().addWidget(self._algo_combo)
@@ -150,13 +155,26 @@ class OWCoRegister(OWBaseWidget):
         algo_key = self._algo_combo.currentData()
 
         try:
-            from grdl.coregistration import FeatureMatchCoRegistration
-
-            method = 'orb' if 'orb' in algo_key else 'sift'
-            coreg = FeatureMatchCoRegistration(
-                method=method,
-                max_features=self.max_features,
-            )
+            if algo_key == 'affine':
+                from grdl.coregistration import AffineCoRegistration
+                coreg = AffineCoRegistration()
+            elif algo_key == 'projective':
+                from grdl.coregistration import ProjectiveCoRegistration
+                coreg = ProjectiveCoRegistration()
+            else:
+                try:
+                    from grdl.coregistration import FeatureMatchCoRegistration
+                except ImportError:
+                    self.Error.registration_failed(
+                        "OpenCV is required for feature matching. "
+                        "Install with: pip install opencv-python-headless"
+                    )
+                    return
+                method = 'orb' if 'orb' in algo_key else 'sift'
+                coreg = FeatureMatchCoRegistration(
+                    method=method,
+                    max_features=self.max_features,
+                )
 
             ref_reader = self._input_stack.readers[ref_idx]
             fixed = ref_reader.read_full()

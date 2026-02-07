@@ -4,8 +4,11 @@ Tests for grdk.core.dsl — DSL compiler and Python DSL decorators.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 Created
 -------

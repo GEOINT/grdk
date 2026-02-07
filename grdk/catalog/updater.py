@@ -12,8 +12,11 @@ packaging
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -32,10 +35,13 @@ Modified
 
 # Standard library
 import json
+import logging
 from typing import List, Optional
 
 # Third-party
 import requests
+
+logger = logging.getLogger(__name__)
 from packaging.version import Version, InvalidVersion
 
 # GRDK internal
@@ -85,7 +91,8 @@ class ArtifactUpdateWorker:
             resp.raise_for_status()
             data = resp.json()
             return data['info']['version']
-        except (requests.RequestException, KeyError, json.JSONDecodeError):
+        except (requests.RequestException, KeyError, json.JSONDecodeError) as e:
+            logger.warning("PyPI check failed for '%s': %s", package_name, e)
             return None
 
     def check_conda(
@@ -129,7 +136,11 @@ class ArtifactUpdateWorker:
 
                 if latest is not None:
                     return str(latest)
-            except (requests.RequestException, KeyError, json.JSONDecodeError):
+            except (requests.RequestException, KeyError, json.JSONDecodeError) as e:
+                logger.warning(
+                    "Conda check failed for '%s' on %s/%s: %s",
+                    package_name, channel, platform, e,
+                )
                 continue
 
         return None

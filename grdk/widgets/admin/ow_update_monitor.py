@@ -11,8 +11,11 @@ orange-widget-base
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -30,6 +33,8 @@ Modified
 """
 
 # Standard library
+import sys
+from pathlib import Path
 from typing import List, Optional
 
 # Third-party
@@ -96,9 +101,9 @@ class OWUpdateMonitor(OWBaseWidget):
         box.layout().addWidget(self._updates_label)
 
         # --- Main area: results table ---
-        self._table = QTableWidget(0, 5, self.mainArea)
+        self._table = QTableWidget(0, 6, self.mainArea)
         self._table.setHorizontalHeaderLabels([
-            "Artifact", "Current", "Latest", "Source", "Status"
+            "Artifact", "Current", "Latest", "Source", "Status", "Action"
         ])
         header = self._table.horizontalHeader()
         header.setStretchLastSection(True)
@@ -196,6 +201,30 @@ class OWUpdateMonitor(OWBaseWidget):
             self._table.setItem(i, 2, latest_item)
             self._table.setItem(i, 3, source_item)
             self._table.setItem(i, 4, status_item)
+
+            # Install button for updatable artifacts
+            if result.update_available:
+                pkg = result.artifact.pypi_package or result.artifact.conda_package
+                if pkg:
+                    btn = QPushButton("Install")
+                    btn.clicked.connect(
+                        lambda _, p=pkg, r=i: self._on_install(p, r)
+                    )
+                    self._table.setCellWidget(i, 5, btn)
+
+    def _on_install(self, package_name: str, row: int) -> None:
+        """Install an updated package via the thread pool."""
+        if self._pool is None:
+            return
+
+        # Disable the install button
+        btn = self._table.cellWidget(row, 5)
+        if btn:
+            btn.setEnabled(False)
+            btn.setText("Installing...")
+
+        target_venv = Path(sys.prefix)
+        self._pool.submit_download(package_name, target_venv)
 
     def onDeleteWidget(self) -> None:
         """Clean up on widget removal."""

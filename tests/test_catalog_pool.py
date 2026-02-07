@@ -4,8 +4,11 @@ Tests for grdk.catalog.pool — ThreadExecutorPool.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 Created
 -------

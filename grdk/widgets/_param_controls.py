@@ -12,8 +12,11 @@ PyQt5 (via Orange)
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -41,6 +44,7 @@ try:
         QFormLayout,
         QGroupBox,
         QLabel,
+        QLineEdit,
         QSlider,
         QSpinBox,
         QVBoxLayout,
@@ -140,17 +144,36 @@ def build_param_controls(
                 widget.setMaximum(float(spec.max_value))
             else:
                 widget.setMaximum(999999.0)
-            widget.setSingleStep(0.01)
+            # Derive step from range if available
+            if spec.min_value is not None and spec.max_value is not None:
+                step = (float(spec.max_value) - float(spec.min_value)) / 100.0
+                widget.setSingleStep(max(step, 0.0001))
+            else:
+                widget.setSingleStep(0.01)
             if not spec.required:
                 widget.setValue(float(spec.default) if spec.default is not None else 0.0)
+            elif spec.default is not None:
+                widget.setValue(float(spec.default))
             if on_changed:
                 widget.valueChanged.connect(
                     lambda val, n=spec.name: on_changed(n, val)
                 )
 
+        elif spec.param_type is str:
+            widget = QLineEdit(group)
+            if spec.default is not None:
+                widget.setText(str(spec.default))
+            elif not spec.required:
+                widget.setText("")
+            if on_changed:
+                widget.textChanged.connect(
+                    lambda text, n=spec.name: on_changed(n, text)
+                )
+
         else:
-            # String or other type — use a label as placeholder
-            widget = QLabel(f"({spec.param_type.__name__})", group)
+            # Unknown type — use a label as placeholder
+            type_name = getattr(spec.param_type, '__name__', str(spec.param_type))
+            widget = QLabel(f"({type_name})", group)
 
         layout.addRow(f"{label}:", widget)
         controls[spec.name] = widget
@@ -190,5 +213,7 @@ def get_param_values(
             values[spec.name] = widget.value()
         elif spec.param_type is float:
             values[spec.name] = widget.value()
+        elif spec.param_type is str and hasattr(widget, 'text'):
+            values[spec.name] = widget.text()
 
     return values

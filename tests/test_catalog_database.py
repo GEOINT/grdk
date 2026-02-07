@@ -4,8 +4,11 @@ Tests for grdk.catalog.database — ArtifactCatalog SQLite database.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 Created
 -------
@@ -34,7 +37,7 @@ def sample_processor():
         version="1.0.0",
         artifact_type="grdl_processor",
         description="Lee speckle filter for SAR imagery",
-        author="Duane Smalley",
+        author="Steven Siebert",
         pypi_package="grdl-lee-filter",
         conda_package="grdl-lee-filter",
         conda_channel="conda-forge",

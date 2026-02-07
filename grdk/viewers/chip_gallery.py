@@ -12,8 +12,11 @@ PyQt5 (via Orange)
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -46,12 +49,13 @@ try:
         QVBoxLayout,
         QWidget,
     )
-    from AnyQt.QtGui import QImage, QPixmap
     from AnyQt.QtCore import Qt, pyqtSignal
 
     _QT_AVAILABLE = True
 except ImportError:
     _QT_AVAILABLE = False
+
+from grdk.viewers.image_canvas import ImageCanvasThumbnail
 
 # GRDK internal
 from grdk.core.chip import Chip, ChipLabel
@@ -66,53 +70,6 @@ _LABEL_COLORS = {
 _LABEL_CYCLE = [ChipLabel.UNKNOWN, ChipLabel.POSITIVE, ChipLabel.NEGATIVE]
 
 THUMB_SIZE = 128
-
-
-def _array_to_pixmap(arr: np.ndarray, size: int = THUMB_SIZE) -> Any:
-    """Convert a numpy array to a QPixmap thumbnail.
-
-    Parameters
-    ----------
-    arr : np.ndarray
-        Image array. Shape (rows, cols) or (rows, cols, 3/4).
-    size : int
-        Thumbnail size in pixels.
-
-    Returns
-    -------
-    QPixmap
-    """
-    if not _QT_AVAILABLE:
-        return None
-
-    # Handle complex
-    if np.iscomplexobj(arr):
-        arr = np.abs(arr)
-
-    # Normalize to uint8
-    arr = arr.astype(np.float64)
-    vmin, vmax = np.nanmin(arr), np.nanmax(arr)
-    if vmax > vmin:
-        arr = (arr - vmin) / (vmax - vmin) * 255.0
-    arr = np.clip(arr, 0, 255).astype(np.uint8)
-
-    if arr.ndim == 2:
-        h, w = arr.shape
-        bytes_per_line = w
-        qimg = QImage(arr.data, w, h, bytes_per_line, QImage.Format.Format_Grayscale8)
-    elif arr.ndim == 3 and arr.shape[2] == 3:
-        h, w, _ = arr.shape
-        arr = np.ascontiguousarray(arr)
-        bytes_per_line = 3 * w
-        qimg = QImage(arr.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-    else:
-        # Use first band
-        band = arr[:, :, 0] if arr.ndim == 3 else arr
-        h, w = band.shape
-        qimg = QImage(band.data, w, h, w, QImage.Format.Format_Grayscale8)
-
-    pixmap = QPixmap.fromImage(qimg)
-    return pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio)
 
 
 class ChipThumbnail(QFrame):
@@ -146,13 +103,11 @@ class ChipThumbnail(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        # Thumbnail image
-        pixmap = _array_to_pixmap(chip.image_data)
-        img_label = QLabel(self)
-        if pixmap is not None:
-            img_label.setPixmap(pixmap)
-        img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(img_label)
+        # Thumbnail image via ImageCanvas
+        self._canvas = ImageCanvasThumbnail(size=THUMB_SIZE, parent=self)
+        if _QT_AVAILABLE:
+            self._canvas.set_array(chip.image_data)
+        layout.addWidget(self._canvas)
 
         # Info text
         info = chip.source_image_name

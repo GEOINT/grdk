@@ -12,8 +12,11 @@ pyyaml
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -32,9 +35,13 @@ Modified
 
 # Standard library
 import json
+import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # Third-party
 import numpy as np
@@ -196,8 +203,16 @@ class GrdkProject:
         }
 
         manifest_path = self.project_dir / self.MANIFEST_FILENAME
-        with open(manifest_path, 'w', encoding='utf-8') as f:
-            json.dump(manifest, f, indent=2)
+        tmp_path = manifest_path.with_suffix('.json.tmp')
+        try:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(manifest, f, indent=2)
+            os.replace(str(tmp_path), str(manifest_path))
+        except Exception:
+            logger.error("Failed to save project manifest to %s", manifest_path)
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
 
     def add_image(self, image_path: str) -> None:
         """Add an image path reference to the project.
@@ -246,8 +261,17 @@ class GrdkProject:
             'count': len(labels),
             'labels': labels,
         }
-        with open(chip_dir / "labels.json", 'w', encoding='utf-8') as f:
-            json.dump(labels_data, f, indent=2)
+        labels_path = chip_dir / "labels.json"
+        labels_tmp = labels_path.with_suffix('.json.tmp')
+        try:
+            with open(labels_tmp, 'w', encoding='utf-8') as f:
+                json.dump(labels_data, f, indent=2)
+            os.replace(str(labels_tmp), str(labels_path))
+        except Exception:
+            logger.error("Failed to save chip labels to %s", labels_path)
+            if labels_tmp.exists():
+                labels_tmp.unlink()
+            raise
 
     def load_chips(
         self,

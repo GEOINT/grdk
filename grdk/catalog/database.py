@@ -7,8 +7,11 @@ about GRDL image processing components and GRDK orchestrated workflows.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -26,9 +29,12 @@ Modified
 """
 
 # Standard library
+import logging
 import sqlite3
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # GRDK internal
 from grdk.catalog.models import Artifact
@@ -104,6 +110,21 @@ END;
 """
 
 
+_SCHEMA_VERSION_SQL = """
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER NOT NULL
+);
+"""
+
+_CURRENT_SCHEMA_VERSION = 1
+
+# Migration functions: (target_version, callable)
+# Add new migrations here as schema evolves.
+_MIGRATIONS: List[tuple] = [
+    # (1, lambda conn: None),  # Version 1 is the initial schema
+]
+
+
 class ArtifactCatalog:
     """SQLite-backed catalog for GRDL and GRDK artifacts.
 
@@ -126,13 +147,54 @@ class ArtifactCatalog:
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
+        self._run_migrations()
 
     def _init_schema(self) -> None:
         """Create tables if they don't exist."""
         self._conn.executescript(_SCHEMA_SQL)
         self._conn.executescript(_FTS_SCHEMA_SQL)
         self._conn.executescript(_FTS_TRIGGERS_SQL)
+        self._conn.executescript(_SCHEMA_VERSION_SQL)
         self._conn.commit()
+
+        # Set initial schema version if not present
+        row = self._conn.execute(
+            "SELECT version FROM schema_version"
+        ).fetchone()
+        if row is None:
+            self._conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?)",
+                (_CURRENT_SCHEMA_VERSION,),
+            )
+            self._conn.commit()
+
+    def _run_migrations(self) -> None:
+        """Run any pending schema migrations."""
+        row = self._conn.execute(
+            "SELECT version FROM schema_version"
+        ).fetchone()
+        current = row['version'] if row else 0
+
+        for target_version, migrate_fn in _MIGRATIONS:
+            if target_version > current:
+                logger.info(
+                    "Running migration to schema version %d", target_version
+                )
+                migrate_fn(self._conn)
+                self._conn.execute(
+                    "UPDATE schema_version SET version = ?",
+                    (target_version,),
+                )
+                self._conn.commit()
+                current = target_version
+
+    @property
+    def schema_version(self) -> int:
+        """Current schema version."""
+        row = self._conn.execute(
+            "SELECT version FROM schema_version"
+        ).fetchone()
+        return row['version'] if row else 0
 
     def close(self) -> None:
         """Close the database connection."""

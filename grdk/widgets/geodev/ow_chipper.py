@@ -12,8 +12,11 @@ orange-widget-base
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -42,6 +45,7 @@ from orangewidget.settings import Setting
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
 from AnyQt.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QLabel,
     QPlainTextEdit,
@@ -154,6 +158,19 @@ class OWChipper(OWBaseWidget):
         self._status_label = QLabel("Polygons: 0", self)
         box.layout().addWidget(self._status_label)
 
+        # Normalization (uses GRDL data_prep.Normalizer when available)
+        box_norm = gui.vBox(self.controlArea, "Normalization")
+        self._norm_combo = QComboBox(self)
+        self._norm_combo.addItem("None", None)
+        try:
+            from grdl.data_prep import Normalizer  # noqa: F401
+            self._norm_combo.addItem("Min-Max [0,1]", "minmax")
+            self._norm_combo.addItem("Z-Score", "zscore")
+            self._norm_combo.addItem("Percentile (2-98%)", "percentile")
+        except ImportError:
+            pass
+        box_norm.layout().addWidget(self._norm_combo)
+
         # Chip button
         box2 = gui.vBox(self.controlArea, "Actions")
 
@@ -237,6 +254,19 @@ class OWChipper(OWBaseWidget):
             polygons=self._polygons,
             timestamps=timestamps,
         )
+
+        # Apply optional normalization via GRDL data_prep.Normalizer
+        norm_method = self._norm_combo.currentData()
+        if norm_method is not None and len(chip_set) > 0:
+            try:
+                from grdl.data_prep import Normalizer
+                normalizer = Normalizer(method=norm_method)
+                for chip in chip_set.chips:
+                    chip.image_data = normalizer.normalize(
+                        chip.image_data.astype(float)
+                    )
+            except ImportError:
+                pass
 
         self._result_label.setText(
             f"Extracted {len(chip_set)} chips from "

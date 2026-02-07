@@ -4,8 +4,11 @@ Tests for grdk.core.workflow — Workflow and ProcessingStep models.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 Created
 -------

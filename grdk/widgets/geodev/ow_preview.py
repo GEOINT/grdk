@@ -11,8 +11,11 @@ orange-widget-base
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -30,7 +33,10 @@ Modified
 """
 
 # Standard library
+import logging
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # Third-party
 import numpy as np
@@ -44,41 +50,16 @@ from AnyQt.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from AnyQt.QtGui import QImage, QPixmap
 from AnyQt.QtCore import Qt
 
 # GRDK internal
+from grdk.core.discovery import discover_processors
 from grdk.core.gpu import GpuBackend
+from grdk.viewers.image_canvas import ImageCanvasThumbnail
 from grdk.widgets._signals import ChipSetSignal, ProcessingPipelineSignal
 
 
 PREVIEW_THUMB = 160
-
-
-def _array_to_pixmap(arr: np.ndarray, size: int = PREVIEW_THUMB) -> QPixmap:
-    """Convert numpy array to QPixmap thumbnail."""
-    if np.iscomplexobj(arr):
-        arr = np.abs(arr)
-    arr = arr.astype(np.float64)
-    vmin, vmax = np.nanmin(arr), np.nanmax(arr)
-    if vmax > vmin:
-        arr = (arr - vmin) / (vmax - vmin) * 255.0
-    arr = np.clip(arr, 0, 255).astype(np.uint8)
-
-    if arr.ndim == 2:
-        h, w = arr.shape
-        qimg = QImage(arr.data, w, h, w, QImage.Format.Format_Grayscale8)
-    elif arr.ndim == 3 and arr.shape[2] >= 3:
-        arr = np.ascontiguousarray(arr[:, :, :3])
-        h, w, _ = arr.shape
-        qimg = QImage(arr.data, w, h, 3 * w, QImage.Format.Format_RGB888)
-    else:
-        band = arr[:, :, 0] if arr.ndim == 3 else arr
-        h, w = band.shape
-        qimg = QImage(band.data, w, h, w, QImage.Format.Format_Grayscale8)
-
-    pixmap = QPixmap.fromImage(qimg)
-    return pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio)
 
 
 class OWPreview(OWBaseWidget):
@@ -113,15 +94,8 @@ class OWPreview(OWBaseWidget):
         self._gpu = GpuBackend()
         self._processors: Dict[str, Any] = {}
 
-        # Discover processors
-        try:
-            import grdl.image_processing as ip
-            import inspect
-            for name, obj in inspect.getmembers(ip, inspect.isclass):
-                if hasattr(obj, 'apply') and not inspect.isabstract(obj):
-                    self._processors[name] = obj
-        except ImportError:
-            pass
+        # Discover processors using shared discovery module
+        self._processors = discover_processors()
 
         # --- Control area ---
         box = gui.vBox(self.controlArea, "Info")
@@ -200,18 +174,20 @@ class OWPreview(OWBaseWidget):
             self._grid.addWidget(info, row, 0)
 
             # Before image
-            before_lbl = QLabel()
-            before_lbl.setPixmap(_array_to_pixmap(source))
-            before_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._grid.addWidget(before_lbl, row, 1)
+            before_canvas = ImageCanvasThumbnail(
+                size=PREVIEW_THUMB, parent=self._container,
+            )
+            before_canvas.set_array(source)
+            self._grid.addWidget(before_canvas, row, 1)
 
             # After image (run pipeline)
             if has_pipeline:
-                after_lbl = QLabel()
+                after_canvas = ImageCanvasThumbnail(
+                    size=PREVIEW_THUMB, parent=self._container,
+                )
                 result = self._run_pipeline(source.copy())
-                after_lbl.setPixmap(_array_to_pixmap(result))
-                after_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self._grid.addWidget(after_lbl, row, 2)
+                after_canvas.set_array(result)
+                self._grid.addWidget(after_canvas, row, 2)
 
     def _run_pipeline(self, source: np.ndarray) -> np.ndarray:
         """Run the pipeline on a single chip."""
@@ -219,14 +195,18 @@ class OWPreview(OWBaseWidget):
             return source
 
         result = source
-        for step in self._pipeline.steps:
+        n_steps = len(self._pipeline.steps)
+        for i, step in enumerate(self._pipeline.steps):
             proc_class = self._processors.get(step.processor_name)
             if proc_class is None:
                 continue
             try:
                 proc = proc_class()
-                result = self._gpu.apply_transform(proc, result, **step.params)
-            except Exception:
+                # Forward progress_callback for long-running processors
+                step_kwargs = dict(step.params)
+                result = self._gpu.apply_transform(proc, result, **step_kwargs)
+            except Exception as e:
+                logger.error("Preview step '%s' failed: %s", step.processor_name, e)
                 break
 
         return result

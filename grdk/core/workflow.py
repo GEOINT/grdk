@@ -8,8 +8,11 @@ Workflows carry tags and can be serialized to Python DSL or YAML.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------

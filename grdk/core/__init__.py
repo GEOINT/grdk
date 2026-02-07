@@ -7,8 +7,11 @@ GPU abstraction, tag taxonomy, and headless execution.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------

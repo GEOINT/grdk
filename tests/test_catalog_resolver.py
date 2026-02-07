@@ -4,8 +4,11 @@ Tests for grdk.catalog.resolver — Catalog path resolution.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 Created
 -------

@@ -12,8 +12,11 @@ orange-widget-base
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -46,30 +49,12 @@ from AnyQt.QtWidgets import (
 )
 
 # GRDK internal
+from grdk.core.discovery import (
+    discover_processors, get_processor_tags,
+    get_all_modalities, get_all_categories,
+)
 from grdk.core.workflow import ProcessingStep
 from grdk.widgets._signals import ProcessingPipelineSignal
-
-
-def _discover_processors() -> Dict[str, Any]:
-    """Discover all available GRDL ImageTransform and ImageDetector classes.
-
-    Returns
-    -------
-    Dict[str, Any]
-        Mapping of display name → class object.
-    """
-    processors: Dict[str, Any] = {}
-    try:
-        import grdl.image_processing as ip
-        import inspect
-
-        for name, obj in inspect.getmembers(ip, inspect.isclass):
-            # Look for classes with an `apply` method (ImageTransform/Detector)
-            if hasattr(obj, 'apply') and not inspect.isabstract(obj):
-                processors[name] = obj
-    except ImportError:
-        pass
-    return processors
 
 
 class OWProcessor(OWBaseWidget):
@@ -96,12 +81,28 @@ class OWProcessor(OWBaseWidget):
     def __init__(self) -> None:
         super().__init__()
 
-        self._processors = _discover_processors()
+        self._processors = discover_processors()
         self._param_controls: Dict[str, Any] = {}
         self._param_group: Optional[QWidget] = None
 
         # --- Control area ---
         box = gui.vBox(self.controlArea, "Processor")
+
+        # Modality filter
+        self._modality_combo = QComboBox(self)
+        self._modality_combo.addItem("All Modalities", None)
+        for mod in sorted(get_all_modalities()):
+            self._modality_combo.addItem(mod, mod)
+        self._modality_combo.currentIndexChanged.connect(self._on_filter_changed)
+        box.layout().addWidget(self._modality_combo)
+
+        # Category filter
+        self._category_combo = QComboBox(self)
+        self._category_combo.addItem("All Categories", None)
+        for cat in sorted(get_all_categories()):
+            self._category_combo.addItem(cat.replace('_', ' ').title(), cat)
+        self._category_combo.currentIndexChanged.connect(self._on_filter_changed)
+        box.layout().addWidget(self._category_combo)
 
         self._combo = QComboBox(self)
         self._combo.addItem("(select processor)", None)
@@ -138,9 +139,21 @@ class OWProcessor(OWBaseWidget):
         if proc_class is None:
             return
 
-        # Show version
+        # Show version and tags
         version = getattr(proc_class, '_processor_version', '')
-        self._version_label.setText(f"Version: {version}" if version else "")
+        tags = get_processor_tags(proc_class)
+        tag_parts = []
+        if version:
+            tag_parts.append(f"v{version}")
+        if tags.get('category'):
+            tag_parts.append(tags['category'].replace('_', ' '))
+        mods = tags.get('modalities', ())
+        if mods:
+            tag_parts.append(', '.join(mods))
+        gpu = getattr(proc_class, '__gpu_compatible__', None)
+        if gpu is True:
+            tag_parts.append("GPU")
+        self._version_label.setText(' | '.join(tag_parts) if tag_parts else "")
 
         # Build parameter controls from TunableParameterSpec
         specs = getattr(proc_class, 'tunable_parameter_specs', ())
@@ -180,6 +193,26 @@ class OWProcessor(OWBaseWidget):
         ))
 
         self.Outputs.pipeline.send(ProcessingPipelineSignal(wf))
+
+    def _on_filter_changed(self, _index: int) -> None:
+        """Rebuild processor combo when modality/category filters change."""
+        modality = self._modality_combo.currentData()
+        category = self._category_combo.currentData()
+
+        self._combo.blockSignals(True)
+        self._combo.clear()
+        self._combo.addItem("(select processor)", None)
+
+        for proc_name in sorted(self._processors.keys()):
+            proc_cls = self._processors[proc_name]
+            tags = get_processor_tags(proc_cls)
+            if modality and modality not in tags.get('modalities', ()):
+                continue
+            if category and tags.get('category') != category:
+                continue
+            self._combo.addItem(proc_name, proc_name)
+
+        self._combo.blockSignals(False)
 
     def _clear_param_controls(self) -> None:
         """Remove existing parameter controls."""

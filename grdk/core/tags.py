@@ -9,8 +9,11 @@ in the catalog, and some can be auto-derived from processors at publish time.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------

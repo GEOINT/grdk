@@ -7,8 +7,11 @@ downloads in the background without blocking the UI.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -26,11 +29,14 @@ Modified
 """
 
 # Standard library
+import logging
 import subprocess
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 # GRDK internal
 from grdk.catalog.models import UpdateResult
@@ -145,6 +151,12 @@ class ThreadExecutorPool:
             else:
                 cmd = [sys.executable, '-m', 'pip', 'install', package]
 
-        return subprocess.run(
+        logger.info("Installing package: %s (cmd=%s)", package, ' '.join(cmd))
+        result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=300
         )
+        if result.returncode != 0:
+            logger.error("Install failed for '%s': %s", package, result.stderr)
+        else:
+            logger.info("Successfully installed '%s'", package)
+        return result

@@ -8,8 +8,11 @@ top of the GRDL library.
 
 Author
 ------
-Duane Smalley, PhD
-duane.d.smalley@gmail.com
+Claude Code (Anthropic)
+
+Contributor
+-----------
+Steven Siebert
 
 License
 -------
@@ -27,6 +30,6 @@ Modified
 """
 
 __version__ = "0.1.0"
-__author__ = "Duane Smalley"
+__author__ = "Claude Code (Anthropic)"
 
 __all__: list = []
