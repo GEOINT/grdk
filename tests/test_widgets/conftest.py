@@ -28,7 +28,7 @@ import pytest
 def qapp():
     """Create a QApplication for the test session."""
     try:
-        from AnyQt.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
     except ImportError:
         pytest.skip("Qt not available")
         return

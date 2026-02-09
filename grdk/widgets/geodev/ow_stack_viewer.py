@@ -42,7 +42,7 @@ import numpy as np
 from orangewidget import gui
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
-from AnyQt.QtWidgets import (
+from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -77,7 +77,7 @@ class OWStackViewer(OWBaseWidget):
 
     class Warning(OWBaseWidget.Warning):
         no_images = Msg("No image stack connected.")
-        napari_missing = Msg("napari not available. Install with: pip install napari[pyqt5]")
+        napari_missing = Msg("napari not available. Install with: pip install napari[pyside6]")
 
     want_main_area = True
 
@@ -130,7 +130,7 @@ class OWStackViewer(OWBaseWidget):
             self.Warning.napari_missing()
             lbl = QLabel(
                 "napari is not installed.\n"
-                "Install with: pip install napari[pyqt5]",
+                "Install with: pip install napari[pyside6]",
                 self._viewer_container,
             )
             self._viewer_container.layout().addWidget(lbl)

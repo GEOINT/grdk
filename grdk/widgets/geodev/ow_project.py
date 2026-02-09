@@ -42,7 +42,7 @@ from orangewidget import gui
 from orangewidget.settings import Setting
 from orangewidget.widget import OWBaseWidget, Output, Msg
 
-from AnyQt.QtWidgets import (
+from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
     QLineEdit,

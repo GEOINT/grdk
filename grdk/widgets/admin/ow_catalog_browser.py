@@ -40,7 +40,7 @@ from typing import List, Optional
 from orangewidget import gui
 from orangewidget.widget import OWBaseWidget, Msg
 
-from AnyQt.QtWidgets import (
+from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
@@ -53,7 +53,7 @@ from AnyQt.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from AnyQt.QtCore import Qt
+from PySide6.QtCore import Qt
 
 # GRDK internal
 from grdk.catalog.models import Artifact

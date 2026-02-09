@@ -14,7 +14,7 @@ Two modes:
 
 1. **`grdk/core/`** — Non-GUI business logic (project model, workflow model, DSL compiler, GPU backend, tag taxonomy, executor, discovery, config). **No Qt imports.**
 2. **`grdk/catalog/`** — SQLite catalog database, path resolution, update checking, thread pool. **No Qt imports.**
-3. **`grdk/viewers/`** — Embeddable Qt widgets (ImageCanvas, NapariStackViewer, ChipGalleryWidget, polygon tools). Requires PyQt5.
+3. **`grdk/viewers/`** — Embeddable Qt widgets (ImageCanvas, NapariStackViewer, ChipGalleryWidget, polygon tools). Requires PySide6.
 4. **`grdk/widgets/`** — Orange3 OWWidget subclasses. Depends on `core/`, `catalog/`, and `viewers/`.
 
 ### Key Relationships
@@ -137,12 +137,14 @@ Follow GRDL's development standards (see `C:\projects\grdl\CLAUDE.md`):
 ### Additional GRDK Standards
 
 - **core/ and catalog/ must not import Qt** — keep GUI-free for headless execution.
+- **Qt imports use PySide6 directly** — do not use AnyQt or PyQt5. Import from `PySide6.QtWidgets`, `PySide6.QtCore`, `PySide6.QtGui`. Use `Signal` (not `pyqtSignal`).
 - **Orange widgets** follow the `ow_<name>.py` naming convention.
 - **Signal types** are defined in `_signals.py` and wrap core models.
 - **Tests** use pytest, synthetic data, no real imagery files.
 - **Image display** goes through ImageCanvas — never create standalone QLabel+QPixmap thumbnail code.
 - **Display enhancements** are pure functions — `normalize_array()` doesn't modify source data.
 - **Viewers are standalone Qt widgets** — no Orange dependency. They can be embedded in any Qt app.
+- **Remote GUI support** — GUI must work over X11 forwarding. Avoid OpenGL-dependent rendering; use `QT_QPA_PLATFORM=xcb` and `QT_QUICK_BACKEND=software` for container compatibility.
 
 ## Catalog Path Resolution
 

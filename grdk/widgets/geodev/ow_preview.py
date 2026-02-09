@@ -43,14 +43,14 @@ import numpy as np
 from orangewidget import gui
 from orangewidget.widget import OWBaseWidget, Input, Msg
 
-from AnyQt.QtWidgets import (
+from PySide6.QtWidgets import (
     QGridLayout,
     QLabel,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
-from AnyQt.QtCore import Qt
+from PySide6.QtCore import Qt
 
 # GRDK internal
 from grdk.core.discovery import discover_processors

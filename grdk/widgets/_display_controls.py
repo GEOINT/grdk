@@ -8,7 +8,7 @@ an ImageCanvas's DisplaySettings. Follows the same pattern as
 
 Dependencies
 ------------
-PyQt5 (via AnyQt)
+PySide6
 
 Author
 ------
@@ -38,7 +38,7 @@ from dataclasses import replace
 from typing import Any, Dict, Optional, Sequence
 
 # Third-party
-from AnyQt.QtWidgets import (
+from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -50,7 +50,7 @@ from AnyQt.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from AnyQt.QtCore import Qt
+from PySide6.QtCore import Qt
 
 from grdk.viewers.image_canvas import (
     AVAILABLE_COLORMAPS,

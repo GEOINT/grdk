@@ -37,9 +37,10 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = [
+    "PySide6>=6.5",
     "orange3>=3.36",
     "orange-widget-base",
-    "napari[pyqt5]>=0.4",
+    "napari>=0.4",
 ]
 gpu = [
     "cupy-cuda12x>=13.0",

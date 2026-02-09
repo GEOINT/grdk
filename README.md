@@ -19,7 +19,7 @@ GRDK turns GRDL's image processing algorithms into a visual drag-and-drop workfl
 # Install in editable mode (core only)
 pip install -e ".[dev]"
 
-# With GUI support (Orange + napari)
+# With GUI support (PySide6 + Orange + napari)
 pip install -e ".[gui,dev]"
 
 # With GPU acceleration (CuPy + PyTorch)
@@ -65,7 +65,8 @@ docs/             # Architecture and API documentation
 | pyyaml | Yes | Workflow DSL serialization |
 | requests, packaging | Yes | Catalog update checking |
 | orange3, orange-widget-base | GUI | Widget framework |
-| napari[pyqt5] | GUI | Stack viewer with polygon drawing |
+| PySide6 | GUI | Qt6 widget toolkit |
+| napari | GUI | Stack viewer with polygon drawing |
 | cupy-cuda12x | GPU | CUDA-accelerated array operations |
 | torch | GPU | ML model inference |
 
@@ -178,6 +179,179 @@ pytest tests/ --cov=grdk --cov-report=term-missing
 | `_display_controls.py` | build_display_controls() — contrast/brightness/gamma/colormap/window UI |
 
 </details>
+
+## Remote GUI Visualization
+
+GRDK's GUI can be displayed on a remote machine (via SSH X11 forwarding) or from inside a Docker/Podman container. PySide6 (Qt6) requires the X11/XCB platform plugin and associated libraries on the remote/container side, and a running X server on the host side.
+
+### Prerequisites (Remote / Container Side)
+
+Install the X11/XCB runtime libraries required by Qt6:
+
+```bash
+# Debian / Ubuntu
+apt-get update && apt-get install -y \
+    libxcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+    libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xfixes0 \
+    libxcb-xinerama0 libxcb-xkb1 libxkbcommon-x11-0 libxkbcommon0 \
+    libegl1 libgl1-mesa-glx libglib2.0-0 libfontconfig1 libdbus-1-3 \
+    x11-utils
+
+# RHEL / Fedora / Rocky
+dnf install -y \
+    libxcb xcb-util-cursor xcb-util-image xcb-util-keysyms \
+    xcb-util-renderutil xcb-util-wm libxkbcommon-x11 libxkbcommon \
+    mesa-libEGL mesa-libGL glib2 fontconfig dbus-libs xorg-x11-utils
+```
+
+### Environment Variables
+
+Set these before launching GRDK:
+
+```bash
+# Force the XCB platform plugin (required for X11 forwarding)
+export QT_QPA_PLATFORM=xcb
+
+# Disable OpenGL for pure software rendering over X11 (avoids GLX errors)
+export QT_QUICK_BACKEND=software
+export LIBGL_ALWAYS_SOFTWARE=1
+
+# If you see "Could not connect to display", verify DISPLAY is set:
+echo $DISPLAY   # Should show e.g. :0 or localhost:10.0
+```
+
+### Option A: Native Linux — SSH X11 Forwarding
+
+From your **local machine** (the one with the display):
+
+```bash
+# Connect with X11 forwarding enabled
+ssh -X user@remote-host
+
+# Or for trusted forwarding (faster, less restrictive):
+ssh -Y user@remote-host
+```
+
+On the **remote host**:
+
+```bash
+# Verify DISPLAY is set (ssh -X sets it automatically)
+echo $DISPLAY
+
+# Set Qt platform and launch
+export QT_QPA_PLATFORM=xcb
+export QT_QUICK_BACKEND=software
+
+# Install and run
+pip install -e ".[gui]"
+python -c "from PySide6.QtWidgets import QApplication; print('PySide6 OK')"  # Quick test
+orange-canvas  # Launch GRDK GUI
+```
+
+### Option B: Docker Container with X11 Forwarding
+
+**Host setup** (run once per session on your local machine):
+
+```bash
+# Allow local Docker containers to access the X server
+xhost +local:docker
+```
+
+**Run the container** with X11 socket and DISPLAY forwarded:
+
+```bash
+docker run -it \
+    -e DISPLAY=$DISPLAY \
+    -e QT_QPA_PLATFORM=xcb \
+    -e QT_QUICK_BACKEND=software \
+    -e LIBGL_ALWAYS_SOFTWARE=1 \
+    -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+    --network=host \
+    your-grdk-image:latest \
+    bash
+```
+
+**Example Dockerfile**:
+
+```dockerfile
+FROM python:3.12-slim
+
+# Install X11/XCB runtime dependencies for Qt6
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+    libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xfixes0 \
+    libxcb-xinerama0 libxcb-xkb1 libxkbcommon-x11-0 libxkbcommon0 \
+    libegl1 libgl1-mesa-glx libglib2.0-0 libfontconfig1 libdbus-1-3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Qt environment for X11 forwarding
+ENV QT_QPA_PLATFORM=xcb
+ENV QT_QUICK_BACKEND=software
+ENV LIBGL_ALWAYS_SOFTWARE=1
+
+WORKDIR /app
+COPY . .
+RUN pip install --no-cache-dir -e ".[gui]"
+
+CMD ["orange-canvas"]
+```
+
+Build and run:
+
+```bash
+docker build -t grdk-gui .
+xhost +local:docker
+docker run -it \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+    --network=host \
+    grdk-gui
+```
+
+### Option C: Podman Container
+
+Podman works similarly but uses `--userns=keep-id` for rootless operation:
+
+```bash
+xhost +local:
+podman run -it \
+    -e DISPLAY=$DISPLAY \
+    -e QT_QPA_PLATFORM=xcb \
+    -e QT_QUICK_BACKEND=software \
+    -e LIBGL_ALWAYS_SOFTWARE=1 \
+    -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+    --userns=keep-id \
+    --network=host \
+    grdk-gui
+```
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `Could not connect to display` | `DISPLAY` not set or X server not reachable | Verify `echo $DISPLAY`, use `ssh -X`, mount X11 socket |
+| `qt.qpa.xcb: could not connect` | Missing xcb libraries or no X server | Install `libxcb*` packages (see Prerequisites) |
+| `Could not load the Qt platform plugin "xcb"` | Missing Qt XCB platform dependencies | Install all `libxcb*` and `libxkbcommon*` packages |
+| `GLX/OpenGL errors` | Hardware GL not available over X11 | Set `QT_QUICK_BACKEND=software` and `LIBGL_ALWAYS_SOFTWARE=1` |
+| `Authorization required` | xhost not configured | Run `xhost +local:docker` on host |
+| `No protocol specified` | Container user mismatch | Use `xhost +local:` or pass `--userns=keep-id` (Podman) |
+| Blank/frozen window | Compositor issue over forwarding | Try `export QT_X11_NO_MITSHM=1` |
+| Slow rendering | Network-bound X11 pixel transfer | Use SSH compression (`ssh -XC`) or consider VNC |
+
+### Security Note
+
+`xhost +local:docker` permits any local process running under the `docker` user to access your X server. For production or multi-user environments, prefer X11 cookie-based authentication:
+
+```bash
+# More secure alternative: share the X authority cookie
+docker run -it \
+    -e DISPLAY=$DISPLAY \
+    -e XAUTHORITY=/tmp/.Xauthority \
+    -v $XAUTHORITY:/tmp/.Xauthority:ro \
+    -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+    --network=host \
+    grdk-gui
+```
 
 ## License
 

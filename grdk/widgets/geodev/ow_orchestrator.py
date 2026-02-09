@@ -45,7 +45,7 @@ import numpy as np
 from orangewidget import gui
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
-from AnyQt.QtWidgets import (
+from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -59,8 +59,8 @@ from AnyQt.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from AnyQt.QtGui import QImage, QPixmap
-from AnyQt.QtCore import Qt, QTimer
+from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtCore import Qt, QTimer
 
 # GRDK internal
 from grdk.core.discovery import discover_processors, get_processor_tags

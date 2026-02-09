@@ -9,7 +9,7 @@ image display components.
 
 Dependencies
 ------------
-PyQt5 (via AnyQt)
+PySide6
 
 Author
 ------
@@ -42,9 +42,9 @@ from typing import Any, Optional
 import numpy as np
 
 try:
-    from AnyQt.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
-    from AnyQt.QtGui import QImage, QPixmap, QPainter
-    from AnyQt.QtCore import Qt, pyqtSignal
+    from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
+    from PySide6.QtGui import QImage, QPixmap, QPainter
+    from PySide6.QtCore import Qt, Signal
 
     _QT_AVAILABLE = True
 except ImportError:
@@ -337,9 +337,9 @@ if _QT_AVAILABLE:
             Emitted when display settings are modified.
         """
 
-        pixel_hovered = pyqtSignal(int, int, object)
-        zoom_changed = pyqtSignal(float)
-        display_settings_changed = pyqtSignal(object)
+        pixel_hovered = Signal(int, int, object)
+        zoom_changed = Signal(float)
+        display_settings_changed = Signal(object)
 
         _ZOOM_FACTOR = 1.15
 

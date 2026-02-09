@@ -53,7 +53,7 @@ def test_geodev_widget_imports(module_path):
     except ImportError as e:
         # Allow missing optional deps like Qt, but fail on actual code errors
         msg = str(e)
-        if "AnyQt" in msg or "orangewidget" in msg or "Qt" in msg:
+        if "PySide6" in msg or "orangewidget" in msg or "Qt" in msg:
             pytest.skip(f"Qt not available: {e}")
         raise
 
@@ -65,6 +65,6 @@ def test_admin_widget_imports(module_path):
         importlib.import_module(module_path)
     except ImportError as e:
         msg = str(e)
-        if "AnyQt" in msg or "orangewidget" in msg or "Qt" in msg:
+        if "PySide6" in msg or "orangewidget" in msg or "Qt" in msg:
             pytest.skip(f"Qt not available: {e}")
         raise
