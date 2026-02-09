@@ -123,7 +123,9 @@ def get_processor_tags(proc_class: Any) -> Dict[str, Any]:
         ``category`` (str or None), ``description`` (str or None).
         Returns empty dict if no tags are present.
     """
-    return getattr(proc_class, '__processor_tags__', {})
+    tags = getattr(proc_class, '__processor_tags__', {})
+    tags['processor_version'] = getattr(proc_class, '__processor_version__', 'unknown')
+    return tags
 
 
 def get_all_modalities() -> Set[str]:
