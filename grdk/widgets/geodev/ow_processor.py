@@ -91,16 +91,16 @@ class OWProcessor(OWBaseWidget):
         # Modality filter
         self._modality_combo = QComboBox(self)
         self._modality_combo.addItem("All Modalities", None)
-        for mod in sorted(get_all_modalities()):
-            self._modality_combo.addItem(mod, mod)
+        for mod in sorted(get_all_modalities(), key=lambda m: m.value):
+            self._modality_combo.addItem(mod.value, mod)
         self._modality_combo.currentIndexChanged.connect(self._on_filter_changed)
         box.layout().addWidget(self._modality_combo)
 
         # Category filter
         self._category_combo = QComboBox(self)
         self._category_combo.addItem("All Categories", None)
-        for cat in sorted(get_all_categories()):
-            self._category_combo.addItem(cat.replace('_', ' ').title(), cat)
+        for cat in sorted(get_all_categories(), key=lambda c: c.value):
+            self._category_combo.addItem(cat.value.replace('_', ' ').title(), cat)
         self._category_combo.currentIndexChanged.connect(self._on_filter_changed)
         box.layout().addWidget(self._category_combo)
 
@@ -146,10 +146,10 @@ class OWProcessor(OWBaseWidget):
         if version:
             tag_parts.append(f"v{version}")
         if tags.get('category'):
-            tag_parts.append(tags['category'].replace('_', ' '))
+            tag_parts.append(tags['category'].value.replace('_', ' '))
         mods = tags.get('modalities', ())
         if mods:
-            tag_parts.append(', '.join(mods))
+            tag_parts.append(', '.join(m.value for m in mods))
         gpu = getattr(proc_class, '__gpu_compatible__', None)
         if gpu is True:
             tag_parts.append("GPU")

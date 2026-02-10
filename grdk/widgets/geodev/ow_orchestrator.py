@@ -395,8 +395,8 @@ class OWOrchestrator(OWBaseWidget):
             proc_cls = self._processors.get(name)
             if proc_cls is not None:
                 tags = get_processor_tags(proc_cls)
-                cat = (tags.get('category') or '').lower()
-                mods = ' '.join(tags.get('modalities', ())).lower()
+                cat = (tags.get('category').value if tags.get('category') else '').lower()
+                mods = ' '.join(m.value for m in tags.get('modalities', ())).lower()
                 if query in cat or query in mods:
                     self._palette_list.addItem(QListWidgetItem(name))
 
