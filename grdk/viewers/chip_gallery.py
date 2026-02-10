@@ -58,7 +58,7 @@ except ImportError:
 from grdk.viewers.image_canvas import ImageCanvasThumbnail
 
 # GRDK internal
-from grdk.core.chip import Chip, ChipLabel
+from grdl_rt.execution.chip import Chip, ChipLabel
 
 
 _LABEL_COLORS = {

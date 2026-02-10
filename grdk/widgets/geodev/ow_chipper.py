@@ -54,7 +54,7 @@ from PySide6.QtWidgets import (
 )
 
 # GRDK internal
-from grdk.core.chip import ChipSet
+from grdl_rt.execution.chip import ChipSet
 from grdk.viewers.polygon_tools import chip_stack_at_polygons
 from grdk.widgets._signals import ImageStack, ChipSetSignal
 

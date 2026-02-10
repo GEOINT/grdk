@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 # GRDK internal
-from grdk.core.chip import ChipLabel, ChipSet
+from grdl_rt.execution.chip import ChipLabel, ChipSet
 from grdk.viewers.chip_gallery import ChipGalleryWidget
 from grdk.widgets._signals import ChipSetSignal
 

@@ -49,11 +49,11 @@ from PySide6.QtWidgets import (
 )
 
 # GRDK internal
-from grdk.core.discovery import (
+from grdl_rt.execution.discovery import (
     discover_processors, get_processor_tags,
     get_all_modalities, get_all_categories,
 )
-from grdk.core.workflow import ProcessingStep
+from grdl_rt.execution.workflow import ProcessingStep
 from grdk.widgets._signals import ProcessingPipelineSignal
 
 
@@ -184,7 +184,7 @@ class OWProcessor(OWBaseWidget):
             specs = getattr(proc_class, 'tunable_parameter_specs', ())
             params = get_param_values(specs, self._param_controls)
 
-        from grdk.core.workflow import WorkflowDefinition
+        from grdl_rt.execution.workflow import WorkflowDefinition
         wf = WorkflowDefinition(name="Single Processor")
         wf.add_step(ProcessingStep(
             processor_name=proc_name,

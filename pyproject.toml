@@ -30,9 +30,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.20",
     "scipy>=1.7",
-    "pyyaml>=6.0",
-    "requests>=2.25",
-    "packaging>=21.0",
+    "grdl-runtime>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -43,8 +41,7 @@ gui = [
     "napari>=0.4",
 ]
 gpu = [
-    "cupy-cuda12x>=13.0",
-    "torch>=2.0",
+    "grdl-runtime[gpu]>=0.1.0",
 ]
 dev = [
     "pytest",

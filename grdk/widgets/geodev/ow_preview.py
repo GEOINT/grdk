@@ -53,8 +53,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 # GRDK internal
-from grdk.core.discovery import discover_processors
-from grdk.core.gpu import GpuBackend
+from grdl_rt.execution.discovery import discover_processors
+from grdl_rt.execution.gpu import GpuBackend
 from grdk.viewers.image_canvas import ImageCanvasThumbnail
 from grdk.widgets._signals import ChipSetSignal, ProcessingPipelineSignal
 

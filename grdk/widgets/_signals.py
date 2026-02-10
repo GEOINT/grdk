@@ -83,7 +83,7 @@ class ChipSetSignal:
     Parameters
     ----------
     chip_set : optional
-        A grdk.core.chip.ChipSet instance.
+        A grdl_rt.execution.chip.ChipSet instance.
     """
 
     def __init__(self, chip_set: Optional[Any] = None) -> None:
@@ -98,7 +98,7 @@ class ProcessingPipelineSignal:
     Parameters
     ----------
     workflow : optional
-        A grdk.core.workflow.WorkflowDefinition instance.
+        A grdl_rt.execution.workflow.WorkflowDefinition instance.
     """
 
     def __init__(self, workflow: Optional[Any] = None) -> None:
@@ -140,7 +140,7 @@ class GrdkProjectSignal:
     Parameters
     ----------
     project : optional
-        A grdk.core.project.GrdkProject instance.
+        A grdl_rt.execution.project.GrdkProject instance.
     """
 
     def __init__(self, project: Optional[Any] = None) -> None:

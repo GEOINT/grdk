@@ -54,7 +54,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 # GRDK internal
-from grdk.catalog.models import Artifact
+from grdl_rt.catalog.models import Artifact
 
 
 class OWWorkflowManager(OWBaseWidget):
@@ -145,8 +145,8 @@ class OWWorkflowManager(OWBaseWidget):
     def _open_catalog(self) -> None:
         """Open the catalog database."""
         try:
-            from grdk.catalog.database import ArtifactCatalog
-            from grdk.catalog.resolver import resolve_catalog_path
+            from grdl_rt.catalog.database import ArtifactCatalog
+            from grdl_rt.catalog.resolver import resolve_catalog_path
 
             path = resolve_catalog_path()
             self._catalog = ArtifactCatalog(db_path=path)
@@ -195,7 +195,7 @@ class OWWorkflowManager(OWBaseWidget):
             return
 
         try:
-            from grdk.core.dsl import DslCompiler
+            from grdl_rt.execution.dsl import DslCompiler
 
             compiler = DslCompiler()
             wf_def = compiler.compile_yaml(Path(path))

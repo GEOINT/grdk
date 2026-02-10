@@ -55,14 +55,14 @@ from PySide6.QtWidgets import (
 )
 
 # GRDK internal
-from grdk.core.dsl import DslCompiler
-from grdk.core.tags import (
+from grdl_rt.execution.dsl import DslCompiler
+from grdl_rt.execution.tags import (
     DetectionType,
     ImageModality,
     SegmentationType,
     WorkflowTags,
 )
-from grdk.core.workflow import WorkflowDefinition, WorkflowState
+from grdl_rt.execution.workflow import WorkflowDefinition, WorkflowState
 from grdk.widgets._signals import (
     GrdkProjectSignal,
     ProcessingPipelineSignal,
@@ -276,9 +276,9 @@ class OWPublisher(OWBaseWidget):
         yaml_src = self._compiler.to_yaml(wf)
 
         try:
-            from grdk.catalog.database import ArtifactCatalog
-            from grdk.catalog.models import Artifact
-            from grdk.catalog.resolver import resolve_catalog_path
+            from grdl_rt.catalog.database import ArtifactCatalog
+            from grdl_rt.catalog.models import Artifact
+            from grdl_rt.catalog.resolver import resolve_catalog_path
 
             catalog_path = resolve_catalog_path()
             with ArtifactCatalog(db_path=catalog_path) as catalog:

@@ -63,9 +63,9 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtCore import Qt, QTimer
 
 # GRDK internal
-from grdk.core.discovery import discover_processors, get_processor_tags
-from grdk.core.gpu import GpuBackend
-from grdk.core.workflow import ProcessingStep, WorkflowDefinition
+from grdl_rt.execution.discovery import discover_processors, get_processor_tags
+from grdl_rt.execution.gpu import GpuBackend
+from grdl_rt.execution.workflow import ProcessingStep, WorkflowDefinition
 from grdk.widgets._signals import ChipSetSignal, ProcessingPipelineSignal
 
 

@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 
 # GRDK internal
-from grdk.catalog.models import UpdateResult
+from grdl_rt.catalog.models import UpdateResult
 
 
 class OWUpdateMonitor(OWBaseWidget):
@@ -120,9 +120,9 @@ class OWUpdateMonitor(OWBaseWidget):
     def _open_catalog(self) -> None:
         """Open catalog and pool."""
         try:
-            from grdk.catalog.database import ArtifactCatalog
-            from grdk.catalog.pool import ThreadExecutorPool
-            from grdk.catalog.resolver import resolve_catalog_path
+            from grdl_rt.catalog.database import ArtifactCatalog
+            from grdl_rt.catalog.pool import ThreadExecutorPool
+            from grdl_rt.catalog.resolver import resolve_catalog_path
 
             path = resolve_catalog_path()
             self._catalog = ArtifactCatalog(db_path=path)
@@ -139,7 +139,7 @@ class OWUpdateMonitor(OWBaseWidget):
         self.Information.checking()
         self._status_label.setText("Checking...")
 
-        from grdk.catalog.updater import ArtifactUpdateWorker
+        from grdl_rt.catalog.updater import ArtifactUpdateWorker
         worker = ArtifactUpdateWorker(self._catalog, timeout=10.0)
         self._future = self._pool.submit_update_check(worker)
         self._poll_timer.start()

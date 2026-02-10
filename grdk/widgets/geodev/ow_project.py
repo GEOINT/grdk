@@ -51,8 +51,8 @@ from PySide6.QtWidgets import (
 )
 
 # GRDK internal
-from grdk.core.project import GrdkProject
-from grdk.core.tags import ProjectTags
+from grdl_rt.execution.project import GrdkProject
+from grdl_rt.execution.tags import ProjectTags
 from grdk.widgets._signals import GrdkProjectSignal
 
 

@@ -82,12 +82,12 @@ def main() -> int:
         return 1
 
     # Compile workflow
-    from grdk.core.dsl import DslCompiler
+    from grdl_rt.execution.dsl import DslCompiler
     compiler = DslCompiler()
     workflow_def = compiler.compile_yaml(args.workflow)
 
     # Set up GPU backend
-    from grdk.core.gpu import GpuBackend
+    from grdl_rt.execution.gpu import GpuBackend
     prefer_gpu = args.gpu and not args.no_gpu
     gpu = GpuBackend(prefer_gpu=prefer_gpu)
 
@@ -111,7 +111,7 @@ def main() -> int:
             return 1
 
     # Execute workflow
-    from grdk.core.executor import WorkflowExecutor
+    from grdl_rt.execution.executor import WorkflowExecutor
     executor = WorkflowExecutor(workflow=workflow_def, gpu=gpu)
     result = executor.execute(source)
 

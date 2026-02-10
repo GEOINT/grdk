@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 # GRDK internal
-from grdk.core.chip import Chip, ChipLabel, ChipSet, PolygonRegion
+from grdl_rt.execution.chip import Chip, ChipLabel, ChipSet, PolygonRegion
 
 
 def polygon_bounding_box(
