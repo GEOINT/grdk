@@ -224,13 +224,13 @@ class TestArrayToQImage:
 
 @pytest.mark.skipif(_QT_SKIP, reason="Qt not available")
 class TestImageCanvasThumbnail:
-    def test_set_array(self, qapp):
+    def test_set_array(self):
         thumb = ImageCanvasThumbnail(size=64)
         arr = np.random.rand(32, 32).astype(np.float32)
         thumb.set_array(arr)
         assert thumb._source is not None
 
-    def test_fixed_size(self, qapp):
+    def test_fixed_size(self):
         thumb = ImageCanvasThumbnail(size=96)
         assert thumb.width() == 96
         assert thumb.height() == 96
