@@ -347,7 +347,7 @@ class OWOrchestrator(OWBaseWidget):
             layout.addWidget(QLabel(f"Processor '{step.processor_name}' not found"))
             return
 
-        specs = getattr(proc_class, 'tunable_parameter_specs', ())
+        specs = getattr(proc_class, '__param_specs__', ())
         if not specs:
             layout.addWidget(QLabel("No tunable parameters"))
             return

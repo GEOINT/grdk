@@ -26,7 +26,7 @@ Created
 
 Modified
 --------
-2026-02-06
+2026-02-11
 """
 
 # Standard library
@@ -103,21 +103,11 @@ def chip_stack_at_polygon(
             img_polygon = polygon
             if registration_results and i < len(registration_results):
                 result = registration_results[i]
-                if result is not None and hasattr(result, 'transform_matrix'):
-                    H = result.transform_matrix
+                if result is not None and hasattr(result, 'transform_points'):
                     try:
-                        H_inv = np.linalg.inv(
-                            H if H.shape == (3, 3) else np.vstack([H, [0, 0, 1]])
+                        img_polygon = result.transform_points(
+                            polygon, inverse=True,
                         )
-                        # Transform (row, col) vertices through inverse homography
-                        ones = np.ones((polygon.shape[0], 1))
-                        # polygon is (N, 2) as (row, col) → homogeneous (col, row, 1)
-                        pts_h = np.hstack([
-                            polygon[:, 1:2], polygon[:, 0:1], ones
-                        ])  # (N, 3) as (x, y, 1)
-                        warped = (H_inv @ pts_h.T).T
-                        warped = warped[:, :2] / warped[:, 2:3]
-                        img_polygon = np.column_stack([warped[:, 1], warped[:, 0]])
                     except np.linalg.LinAlgError:
                         pass  # Use original polygon if inversion fails
 

@@ -113,19 +113,19 @@ def main() -> int:
     # Execute workflow
     from grdl_rt.execution.executor import WorkflowExecutor
     executor = WorkflowExecutor(workflow=workflow_def, gpu=gpu)
-    result = executor.execute(source)
+    wr = executor.execute(source)
 
     # Write output
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
     if args.output_path.suffix == '.npy':
-        np.save(str(args.output_path), result)
+        np.save(str(args.output_path), wr.result)
     else:
         try:
             from grdl.IO import open_writer
             writer = open_writer(str(args.output_path))
-            writer.write(result)
+            writer.write(wr.result)
         except (ImportError, Exception):
-            np.save(str(args.output_path), result)
+            np.save(str(args.output_path), wr.result)
 
     print(f"Output written to: {args.output_path}")
     return 0

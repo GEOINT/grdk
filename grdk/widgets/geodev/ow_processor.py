@@ -155,8 +155,8 @@ class OWProcessor(OWBaseWidget):
             tag_parts.append("GPU")
         self._version_label.setText(' | '.join(tag_parts) if tag_parts else "")
 
-        # Build parameter controls from TunableParameterSpec
-        specs = getattr(proc_class, 'tunable_parameter_specs', ())
+        # Build parameter controls from __param_specs__
+        specs = getattr(proc_class, '__param_specs__', ())
         if specs:
             from grdk.widgets._param_controls import build_param_controls
             group, self._param_controls = build_param_controls(
@@ -181,7 +181,7 @@ class OWProcessor(OWBaseWidget):
         params = {}
         if self._param_controls:
             from grdk.widgets._param_controls import get_param_values
-            specs = getattr(proc_class, 'tunable_parameter_specs', ())
+            specs = getattr(proc_class, '__param_specs__', ())
             params = get_param_values(specs, self._param_controls)
 
         from grdl_rt.execution.workflow import WorkflowDefinition

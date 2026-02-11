@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Parameter Control Builder - Auto-generate Qt controls from TunableParameterSpec.
+Parameter Control Builder - Auto-generate Qt controls from ParamSpec.
 
 Provides functions to create Qt widgets (sliders, spinboxes, comboboxes,
-checkboxes) from GRDL TunableParameterSpec declarations. Used by multiple
+checkboxes) from GRDL ParamSpec declarations. Used by multiple
 GEODEV widgets to build parameter editing UIs dynamically.
 
 Dependencies
@@ -62,12 +62,12 @@ def build_param_controls(
     parent: Optional[Any] = None,
     on_changed: Optional[Callable] = None,
 ) -> Tuple[Any, Dict[str, Any]]:
-    """Build a QGroupBox with controls for each TunableParameterSpec.
+    """Build a QGroupBox with controls for each ParamSpec.
 
     Parameters
     ----------
     specs : tuple
-        Tuple of TunableParameterSpec instances.
+        Tuple of ParamSpec instances.
     parent : Optional[QWidget]
         Parent widget.
     on_changed : Optional[Callable]
@@ -190,7 +190,7 @@ def get_param_values(
     Parameters
     ----------
     specs : tuple
-        TunableParameterSpec instances.
+        ParamSpec instances.
     controls : Dict[str, QWidget]
         Control widgets from build_param_controls().
 
