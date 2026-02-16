@@ -29,7 +29,7 @@ Created
 
 Modified
 --------
-2026-02-06
+2026-02-16
 """
 
 # Standard library
@@ -41,7 +41,7 @@ from orangewidget import gui
 from orangewidget.settings import Setting
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -54,7 +54,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-# GRDK internal
+# GRDL vocabulary enums
+from grdl.vocabulary import DetectionType, ImageModality, SegmentationType
+
+# GRDL Runtime internal
 from grdl_rt.execution.dsl import DslCompiler
 from grdl_rt.execution.tags import (
     DetectionType,
@@ -85,11 +88,11 @@ class OWPublisher(OWBaseWidget):
     priority = 80
 
     class Inputs:
-        pipeline = Input("Pipeline", ProcessingPipelineSignal)
-        project = Input("Project", GrdkProjectSignal)
+        pipeline = Input("Pipeline", ProcessingPipelineSignal, auto_summary=False)
+        project = Input("Project", GrdkProjectSignal, auto_summary=False)
 
     class Outputs:
-        artifact = Output("Workflow Artifact", WorkflowArtifactSignal)
+        artifact = Output("Workflow Artifact", WorkflowArtifactSignal, auto_summary=False)
 
     class Warning(OWBaseWidget.Warning):
         no_pipeline = Msg("No pipeline connected.")

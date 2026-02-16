@@ -30,7 +30,7 @@ Created
 
 Modified
 --------
-2026-02-06
+2026-02-16
 """
 
 # Standard library
@@ -45,7 +45,7 @@ import numpy as np
 from orangewidget import gui
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -59,8 +59,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtCore import Qt, QTimer
 
 # GRDK internal
 from grdl_rt.execution.discovery import discover_processors, get_processor_tags
@@ -111,10 +111,10 @@ class OWOrchestrator(OWBaseWidget):
     priority = 70
 
     class Inputs:
-        chip_set = Input("Chip Set", ChipSetSignal)
+        chip_set = Input("Chip Set", ChipSetSignal, auto_summary=False)
 
     class Outputs:
-        pipeline = Output("Pipeline", ProcessingPipelineSignal)
+        pipeline = Output("Pipeline", ProcessingPipelineSignal, auto_summary=False)
 
     class Warning(OWBaseWidget.Warning):
         no_chips = Msg("No chips connected for preview.")
@@ -279,7 +279,7 @@ class OWOrchestrator(OWBaseWidget):
 
         proc_name = item.text()
         proc_class = self._processors.get(proc_name)
-        version = getattr(proc_class, '_processor_version', '') if proc_class else ''
+        version = getattr(proc_class, '__processor_version__', '') if proc_class else ''
 
         step = ProcessingStep(
             processor_name=proc_name,

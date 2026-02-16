@@ -48,8 +48,8 @@ except ImportError:
     _NAPARI_AVAILABLE = False
 
 try:
-    from PySide6.QtWidgets import QVBoxLayout, QWidget
-    from PySide6.QtCore import Signal, QObject
+    from PyQt6.QtWidgets import QVBoxLayout, QWidget
+    from PyQt6.QtCore import pyqtSignal as Signal, QObject
     _QT_AVAILABLE = True
 except ImportError:
     _QT_AVAILABLE = False
@@ -79,7 +79,7 @@ class NapariStackViewer:
         if not _NAPARI_AVAILABLE:
             raise ImportError(
                 "napari is required for the stack viewer. "
-                "Install with: pip install napari[pyside6]"
+                "Install with: pip install napari[pyqt6]"
             )
 
         self._on_polygon_added = on_polygon_added

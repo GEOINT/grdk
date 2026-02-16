@@ -30,7 +30,7 @@ Created
 
 Modified
 --------
-2026-02-06
+2026-02-16
 """
 
 # Standard library
@@ -41,7 +41,7 @@ from orangewidget import gui
 from orangewidget.settings import Setting
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QComboBox,
     QLabel,
     QVBoxLayout,
@@ -72,7 +72,7 @@ class OWProcessor(OWBaseWidget):
     priority = 65
 
     class Outputs:
-        pipeline = Output("Pipeline", ProcessingPipelineSignal)
+        pipeline = Output("Pipeline", ProcessingPipelineSignal, auto_summary=False)
 
     selected_processor: str = Setting("")
 
@@ -140,7 +140,7 @@ class OWProcessor(OWBaseWidget):
             return
 
         # Show version and tags
-        version = getattr(proc_class, '_processor_version', '')
+        version = getattr(proc_class, '__processor_version__', '')
         tags = get_processor_tags(proc_class)
         tag_parts = []
         if version:
@@ -176,7 +176,7 @@ class OWProcessor(OWBaseWidget):
             return
 
         proc_class = self._processors.get(proc_name)
-        version = getattr(proc_class, '_processor_version', '') if proc_class else ''
+        version = getattr(proc_class, '__processor_version__', '') if proc_class else ''
 
         params = {}
         if self._param_controls:

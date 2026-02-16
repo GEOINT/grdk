@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 import pytest
 
 try:
-    from PySide6.QtWidgets import QApplication
+    from PyQt6.QtWidgets import QApplication
     _QT_AVAILABLE = True
 except ImportError:
     _QT_AVAILABLE = False

@@ -16,59 +16,78 @@ GRDK turns GRDL's image processing algorithms into a visual drag-and-drop workfl
 ## Quick Start
 
 ```bash
-# Install in editable mode (core only)
+# Install in editable mode
+pip install -e .
+
+# With dev tools (pytest, black, mypy)
 pip install -e ".[dev]"
-
-# With GUI support (PySide6 + Orange + napari)
-pip install -e ".[gui,dev]"
-
-# With GPU acceleration (CuPy + PyTorch)
-pip install -e ".[gpu,dev]"
 ```
 
-Launch Orange Canvas and find GRDK widgets in the **GEODEV** and **GRDK Admin** categories.
+### Launching the Canvas
+
+GRDK provides the `grdk-canvas` command, which launches the [Orange Canvas](https://orangedatamining.com/) with the PyQt6 backend pre-configured and GRDK widgets registered:
+
+```bash
+grdk-canvas
+```
+
+This is the primary way to use GRDK interactively. The canvas loads two widget categories:
+
+- **GEODEV** — Image Loader, Stack Viewer, Co-Register, Processor, Orchestrator, Preview, Chipper, Labeler, Project, Publisher
+- **GRDK Admin** — Catalog Browser, Artifact Editor, Workflow Manager, Update Monitor
+
+Drag widgets onto the canvas, connect them with signal wires, and build image processing workflows visually.
+
+> **Note:** `grdk-canvas` sets `QT_API=pyqt6` and configures the AnyQt backend before importing Orange. Always use `grdk-canvas` instead of `orange-canvas` to ensure the correct Qt backend.
 
 ### Headless Execution
 
+Run workflows without a GUI:
+
 ```bash
 python -m grdk workflow.yaml --input image.tif --output result.tif
+python -m grdk workflow.yaml --input image.tif --output result.tif --no-gpu
 ```
 
 ## Architecture
 
 ```
-grdk/
-  core/           # Business logic (no Qt) — workflow, executor, GPU, DSL, tags, config
-  catalog/        # SQLite artifact catalog (no Qt) — database, resolver, updater, pool
-  viewers/        # Embeddable Qt widgets — ImageCanvas, napari stack viewer, chip gallery
-  widgets/
-    _signals.py   # Custom Orange signal types (ImageStack, ChipSetSignal, etc.)
-    _param_controls.py    # Dynamic parameter UI builder
-    _display_controls.py  # Image display settings UI builder
-    geodev/       # 10 GEODEV workflow widgets (ow_*.py)
-    admin/        # 4 Admin catalog widgets (ow_*.py)
-tests/            # pytest suite (149+ tests)
-docs/             # Architecture and API documentation
+grdl              (processing primitives — no framework awareness)
+  ↓
+grdl-runtime      (execution framework — no GUI)
+  ├── grdl_rt.execution/  — workflow engine, GPU backend, discovery, DSL
+  └── grdl_rt.catalog/    — artifact storage, search, updates
+  ↓
+grdk              (Qt/Orange GUI)
+  ├── viewers/    — embeddable Qt widgets (ImageCanvas, napari viewer, chip gallery)
+  ├── widgets/
+  │   ├── _signals.py          — custom Orange signal types
+  │   ├── _param_controls.py   — dynamic parameter UI builder
+  │   ├── _display_controls.py — image display settings UI builder
+  │   ├── geodev/              — 10 GEODEV workflow widgets (ow_*.py)
+  │   └── admin/               — 4 Admin catalog widgets (ow_*.py)
+  ├── _launcher.py             — grdk-canvas entry point
+  └── _pyqt6_bootstrap.py     — PyQt6/AnyQt backend setup
+tests/            — pytest suite
+docs/             — architecture and API documentation
 ```
 
 ### Layer Rules
 
-- **`core/`** and **`catalog/`** must not import Qt — keeps headless execution clean
-- **`viewers/`** are standalone Qt widgets, embeddable in any parent
-- **`widgets/`** are Orange `OWBaseWidget` subclasses that compose `viewers/` and `core/`
+- **Execution and catalog logic lives in [grdl-runtime](../grdl-runtime)** (`grdl_rt` package) — GRDK widgets import from `grdl_rt.execution` and `grdl_rt.catalog`, not from local directories
+- **`viewers/`** are standalone Qt widgets, embeddable in any Qt parent — no Orange dependency
+- **`widgets/`** are Orange `OWBaseWidget` subclasses that compose `viewers/` and `grdl_rt`
 
 ### Key Dependencies
 
-| Dependency | Required | Purpose |
-|-----------|----------|---------|
-| numpy, scipy | Yes | Array operations, image processing |
-| pyyaml | Yes | Workflow DSL serialization |
-| requests, packaging | Yes | Catalog update checking |
-| orange3, orange-widget-base | GUI | Widget framework |
-| PySide6 | GUI | Qt6 widget toolkit |
-| napari | GUI | Stack viewer with polygon drawing |
-| cupy-cuda12x | GPU | CUDA-accelerated array operations |
-| torch | GPU | ML model inference |
+| Dependency | Purpose |
+|-----------|---------|
+| grdl-runtime | Execution framework (workflow engine, GPU backend, catalog, discovery) |
+| grdl | Image I/O, processing algorithms, coregistration |
+| numpy, scipy | Array operations |
+| PyQt6 | Qt6 widget toolkit |
+| orange3, orange-widget-base | Orange Canvas widget framework |
+| napari | Stack viewer with polygon drawing |
 
 ## Image Viewer (ImageCanvas)
 
@@ -119,27 +138,25 @@ pytest tests/ --cov=grdk --cov-report=term-missing
 <details>
 <summary>Click to expand full file listing</summary>
 
-### Core (`grdk/core/`)
-| File | Purpose |
-|------|---------|
-| `chip.py` | Chip, ChipSet, ChipLabel, PolygonRegion models |
-| `config.py` | GrdkConfig dataclass, load/save from ~/.grdl/grdk_config.json |
-| `discovery.py` | Processor discovery, tag filtering, class resolution |
-| `dsl.py` | Workflow DSL — Python decorator syntax + YAML serialization |
-| `executor.py` | WorkflowExecutor — headless pipeline execution with progress callbacks |
-| `gpu.py` | GpuBackend — CuPy/PyTorch dispatch with CPU fallback |
-| `project.py` | GrdkProject — project directory management with atomic saves |
-| `tags.py` | ImageModality, DetectionType, ProjectTags, WorkflowTags |
-| `workflow.py` | ProcessingStep, WorkflowDefinition, WorkflowState |
+### Execution & Catalog (from [grdl-runtime](../grdl-runtime))
 
-### Catalog (`grdk/catalog/`)
-| File | Purpose |
-|------|---------|
-| `database.py` | ArtifactCatalog — SQLite FTS5 database with schema migrations |
-| `models.py` | CatalogArtifact, ArtifactType, SearchResult models |
-| `pool.py` | ThreadExecutorPool — background package install/download |
-| `resolver.py` | Catalog path resolution (env var, config, default) |
-| `updater.py` | UpdateChecker — PyPI/conda version monitoring |
+These modules are imported by GRDK widgets from the `grdl_rt` package:
+
+| Package | Key Types Used by Widgets |
+|---------|--------------------------|
+| `grdl_rt.execution.discovery` | `discover_processors()`, `get_processor_tags()` |
+| `grdl_rt.execution.gpu` | `GpuBackend` |
+| `grdl_rt.execution.workflow` | `WorkflowDefinition`, `ProcessingStep`, `WorkflowState` |
+| `grdl_rt.execution.dsl` | `DslCompiler` |
+| `grdl_rt.execution.chip` | `Chip`, `ChipSet`, `ChipLabel`, `PolygonRegion` |
+| `grdl_rt.execution.tags` | `WorkflowTags`, `ProjectTags` |
+| `grdl_rt.execution.project` | `GrdkProject` |
+| `grdl_rt.execution.executor` | `WorkflowExecutor` |
+| `grdl_rt.catalog.database` | `ArtifactCatalog` |
+| `grdl_rt.catalog.models` | `Artifact`, `UpdateResult` |
+| `grdl_rt.catalog.resolver` | `resolve_catalog_path()` |
+| `grdl_rt.catalog.updater` | `ArtifactUpdateWorker` |
+| `grdl_rt.catalog.pool` | `ThreadExecutorPool` |
 
 ### Viewers (`grdk/viewers/`)
 | File | Purpose |
@@ -154,7 +171,7 @@ pytest tests/ --cov=grdk --cov-report=term-missing
 |--------|------|---------|
 | `ow_image_loader.py` | Image Loader | Load TIFF/NITF/HDF5 into image stack |
 | `ow_stack_viewer.py` | Stack Viewer | Napari viewer with polygon drawing |
-| `ow_coregister.py` | Co-Register | Affine/projective/feature-match registration |
+| `ow_coregister.py` | Co-Register | ORB/SIFT feature-match registration (affine/homography) |
 | `ow_processor.py` | Processor | Single GRDL processor with tunable params |
 | `ow_orchestrator.py` | Orchestrator | Multi-step pipeline builder |
 | `ow_preview.py` | Preview | Real-time before/after GPU preview |
@@ -182,7 +199,7 @@ pytest tests/ --cov=grdk --cov-report=term-missing
 
 ## Remote GUI Visualization
 
-GRDK's GUI can be displayed on a remote machine (via SSH X11 forwarding) or from inside a Docker/Podman container. PySide6 (Qt6) requires the X11/XCB platform plugin and associated libraries on the remote/container side, and a running X server on the host side.
+GRDK's GUI can be displayed on a remote machine (via SSH X11 forwarding) or from inside a Docker/Podman container. PyQt6 (Qt6) requires the X11/XCB platform plugin and associated libraries on the remote/container side, and a running X server on the host side.
 
 ### Prerequisites (Remote / Container Side)
 
@@ -243,9 +260,9 @@ export QT_QPA_PLATFORM=xcb
 export QT_QUICK_BACKEND=software
 
 # Install and run
-pip install -e ".[gui]"
-python -c "from PySide6.QtWidgets import QApplication; print('PySide6 OK')"  # Quick test
-orange-canvas  # Launch GRDK GUI
+pip install -e .
+python -c "from PyQt6.QtWidgets import QApplication; print('PyQt6 OK')"  # Quick test
+grdk-canvas  # Launch GRDK GUI
 ```
 
 ### Option B: Docker Container with X11 Forwarding
@@ -291,9 +308,9 @@ ENV LIBGL_ALWAYS_SOFTWARE=1
 
 WORKDIR /app
 COPY . .
-RUN pip install --no-cache-dir -e ".[gui]"
+RUN pip install --no-cache-dir -e .
 
-CMD ["orange-canvas"]
+CMD ["grdk-canvas"]
 ```
 
 Build and run:

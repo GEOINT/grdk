@@ -8,7 +8,7 @@ Clicking a chip cycles through labels.
 
 Dependencies
 ------------
-PySide6
+PyQt6
 
 Author
 ------
@@ -40,7 +40,7 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 
 try:
-    from PySide6.QtWidgets import (
+    from PyQt6.QtWidgets import (
         QFrame,
         QGridLayout,
         QLabel,
@@ -49,7 +49,7 @@ try:
         QVBoxLayout,
         QWidget,
     )
-    from PySide6.QtCore import Qt, Signal
+    from PyQt6.QtCore import Qt, pyqtSignal as Signal
 
     _QT_AVAILABLE = True
 except ImportError:

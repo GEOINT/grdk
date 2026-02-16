@@ -8,7 +8,7 @@ GEODEV widgets to build parameter editing UIs dynamically.
 
 Dependencies
 ------------
-PySide6
+PyQt6
 
 Author
 ------
@@ -37,7 +37,7 @@ Modified
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
-    from PySide6.QtWidgets import (
+    from PyQt6.QtWidgets import (
         QCheckBox,
         QComboBox,
         QDoubleSpinBox,
@@ -50,7 +50,7 @@ try:
         QVBoxLayout,
         QWidget,
     )
-    from PySide6.QtCore import Qt
+    from PyQt6.QtCore import Qt
 
     _QT_AVAILABLE = True
 except ImportError:

@@ -41,7 +41,7 @@ from typing import List, Optional
 from orangewidget import gui
 from orangewidget.widget import OWBaseWidget, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPushButton,
@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
 )
-from PySide6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer
 
 # GRDK internal
 from grdl_rt.catalog.models import UpdateResult
