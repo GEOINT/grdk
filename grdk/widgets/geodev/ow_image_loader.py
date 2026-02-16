@@ -30,7 +30,7 @@ Created
 
 Modified
 --------
-2026-02-06
+2026-02-16
 """
 
 # Standard library
@@ -61,9 +61,9 @@ def _try_open_reader(filepath: str):
     """Attempt to open an image using GRDL readers.
 
     Tries multiple reader strategies in order:
-    1. GRDL open_sar() for SAR formats
-    2. GRDL BIOMASSL1Reader for BIOMASS
-    3. Rasterio fallback for GeoTIFF/NITF
+    1. GRDL open_sar() for SAR formats (SICD, CPHD, CRSD, SIDD, Sentinel-1)
+    2. GRDL BIOMASSL1Reader for BIOMASS HDF5
+    3. GRDL open_image() for generic formats (GeoTIFF, NITF, HDF5, JPEG2000)
 
     Parameters
     ----------
@@ -84,15 +84,15 @@ def _try_open_reader(filepath: str):
 
     # Try BIOMASS
     try:
-        from grdl.IO.biomass import BIOMASSL1Reader
+        from grdl.IO.sar import BIOMASSL1Reader
         return BIOMASSL1Reader(str(path))
     except Exception:
         pass
 
-    # Rasterio fallback (GeoTIFF, NITF, etc.)
+    # Generic fallback (GeoTIFF, NITF, HDF5, JPEG2000)
     try:
-        from grdl.IO.sar import GRDReader
-        return GRDReader(str(path))
+        from grdl.IO import open_image
+        return open_image(str(path))
     except Exception:
         pass
 

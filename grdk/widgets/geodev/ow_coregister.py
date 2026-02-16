@@ -3,8 +3,13 @@
 OWCoRegister Widget - Co-register an image stack.
 
 Provides controls for selecting a reference image, choosing a
-co-registration algorithm (from GRDL), tuning parameters, and
-viewing quality metrics. Emits a co-registered ImageStack.
+co-registration algorithm (from GRDL coregistration module), tuning
+parameters, and viewing quality metrics. Emits a co-registered
+ImageStack.
+
+All automatic registration modes use GRDL FeatureMatchCoRegistration
+with configurable feature detector (ORB/SIFT) and transform model
+(affine/homography).
 
 Dependencies
 ------------
@@ -30,7 +35,7 @@ Created
 
 Modified
 --------
-2026-02-06
+2026-02-16
 """
 
 # Standard library
@@ -56,8 +61,10 @@ from grdk.widgets._signals import ImageStack
 class OWCoRegister(OWBaseWidget):
     """Co-register images in a stack to a common pixel space.
 
-    Uses GRDL co-registration algorithms (feature-based, affine, etc.)
-    to align all images in the stack to a selected reference image.
+    Uses GRDL FeatureMatchCoRegistration to automatically align all
+    images in the stack to a selected reference image. Supports ORB
+    and SIFT feature detectors with affine or homography transform
+    models.
     """
 
     name = "Co-Register"
@@ -81,8 +88,9 @@ class OWCoRegister(OWBaseWidget):
 
     # Settings
     reference_index: int = Setting(0)
-    algorithm: str = Setting("feature_match_orb")
+    algorithm: str = Setting("orb_affine")
     max_features: int = Setting(5000)
+    ransac_threshold: float = Setting(5.0)
 
     want_main_area = True
 
@@ -103,10 +111,10 @@ class OWCoRegister(OWBaseWidget):
         # Algorithm selector
         box.layout().addWidget(QLabel("Algorithm:"))
         self._algo_combo = QComboBox(self)
-        self._algo_combo.addItem("Affine (Control Points)", "affine")
-        self._algo_combo.addItem("Projective (Homography)", "projective")
-        self._algo_combo.addItem("Feature Match (ORB)", "feature_match_orb")
-        self._algo_combo.addItem("Feature Match (SIFT)", "feature_match_sift")
+        self._algo_combo.addItem("ORB + Affine", "orb_affine")
+        self._algo_combo.addItem("ORB + Homography", "orb_homography")
+        self._algo_combo.addItem("SIFT + Affine", "sift_affine")
+        self._algo_combo.addItem("SIFT + Homography", "sift_homography")
         box.layout().addWidget(self._algo_combo)
 
         # Run button
@@ -155,26 +163,27 @@ class OWCoRegister(OWBaseWidget):
         algo_key = self._algo_combo.currentData()
 
         try:
-            if algo_key == 'affine':
-                from grdl.coregistration import AffineCoRegistration
-                coreg = AffineCoRegistration()
-            elif algo_key == 'projective':
-                from grdl.coregistration import ProjectiveCoRegistration
-                coreg = ProjectiveCoRegistration()
-            else:
-                try:
-                    from grdl.coregistration import FeatureMatchCoRegistration
-                except ImportError:
-                    self.Error.registration_failed(
-                        "OpenCV is required for feature matching. "
-                        "Install with: pip install opencv-python-headless"
-                    )
-                    return
-                method = 'orb' if 'orb' in algo_key else 'sift'
-                coreg = FeatureMatchCoRegistration(
-                    method=method,
-                    max_features=self.max_features,
+            try:
+                from grdl.coregistration import FeatureMatchCoRegistration
+            except ImportError:
+                self.Error.registration_failed(
+                    "OpenCV is required for co-registration. "
+                    "Install with: pip install opencv-python-headless"
                 )
+                return
+
+            # Parse algo_key: "{method}_{transform_type}"
+            method = 'orb' if algo_key.startswith('orb') else 'sift'
+            transform_type = (
+                'homography' if algo_key.endswith('homography') else 'affine'
+            )
+
+            coreg = FeatureMatchCoRegistration(
+                method=method,
+                max_features=self.max_features,
+                transform_type=transform_type,
+                ransac_threshold=self.ransac_threshold,
+            )
 
             ref_reader = self._input_stack.readers[ref_idx]
             fixed = ref_reader.read_full()

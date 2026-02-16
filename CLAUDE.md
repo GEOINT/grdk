@@ -12,18 +12,30 @@ Two modes:
 
 ### Layers
 
-1. **`grdk/core/`** — Non-GUI business logic (project model, workflow model, DSL compiler, GPU backend, tag taxonomy, executor, discovery, config). **No Qt imports.**
-2. **`grdk/catalog/`** — SQLite catalog database, path resolution, update checking, thread pool. **No Qt imports.**
-3. **`grdk/viewers/`** — Embeddable Qt widgets (ImageCanvas, NapariStackViewer, ChipGalleryWidget, polygon tools). Requires PyQt6.
-4. **`grdk/widgets/`** — Orange3 OWWidget subclasses. Depends on `core/`, `catalog/`, and `viewers/`.
+```
+grdl  (processing primitives — no framework awareness)
+  ↓
+grdl-runtime  (execution framework — no GUI)
+  ├── grdl_rt.execution/  — workflow engine, builder, GPU backend, discovery, DSL
+  └── grdl_rt.catalog/    — artifact storage, search, updates
+  ↓
+grdk  (Qt/Orange GUI — uses grdl-runtime for execution)
+  ├── grdk/viewers/  — embeddable Qt widgets (no Orange dependency)
+  └── grdk/widgets/  — Orange3 OWWidget subclasses
+```
+
+1. **`grdl-runtime`** (`grdl_rt` package) — Non-GUI execution framework: workflow models, DSL compiler, GPU backend, tag taxonomy, executor, discovery, config, project model, artifact catalog (SQLite + FTS5), path resolution, update checking, thread pool. **No Qt imports.** See `../grdl-runtime/CLAUDE.md` for full details.
+2. **`grdk/viewers/`** — Embeddable Qt widgets (ImageCanvas, NapariStackViewer, ChipGalleryWidget, polygon tools). Requires PyQt6. No Orange dependency.
+3. **`grdk/widgets/`** — Orange3 OWWidget subclasses. Depends on `grdl_rt`, `grdl`, and `viewers/`.
 
 ### Key Relationships
 
 - GRDK depends on **GRDL** (`grdl` package) for all image I/O, geolocation, and processing operations.
+- GRDK depends on **grdl-runtime** (`grdl_rt` package) for workflow execution, discovery, GPU dispatch, catalog, and project management.
 - GRDK widgets use **custom signal types** (`grdk/widgets/_signals.py`) instead of Orange's default Table signals.
 - GPU acceleration uses **CuPy** (numpy-compatible) for image transforms and **PyTorch** for ML model inference.
-- The **DSL** supports both Python decorator syntax and YAML serialization, with bidirectional conversion.
-- **One GRDK widget per GRDL component type** — widgets dynamically discover available GRDL classes via `discover_processors()`, not a hardcoded list.
+- The **DSL** supports both Python decorator syntax and YAML serialization, with bidirectional conversion (via `grdl_rt.execution.dsl`).
+- **One GRDK widget per GRDL component type** — widgets dynamically discover available GRDL classes via `grdl_rt.execution.discover_processors()`, not a hardcoded list.
 
 ### Image Display
 
@@ -36,42 +48,46 @@ All image display flows through `grdk/viewers/image_canvas.py`:
 
 Colormaps are implemented as 256×3 uint8 numpy LUTs (grayscale, viridis, inferno, plasma, hot) — no matplotlib dependency.
 
-### GRDL Integration Points
+### GRDL / grdl-runtime Integration Points
 
 Six integration surfaces (see `docs/architecture.md` for details):
 
-1. **Processor Discovery** (`grdk/core/discovery.py`) — scans `grdl.image_processing` and `grdl.coregistration` via `inspect.getmembers()`.
-2. **GPU Dispatch** (`grdk/core/gpu.py`) — wraps processor execution with optional CuPy acceleration, checks `__gpu_compatible__` flag.
-3. **Tag Filtering** (`grdk/core/discovery.py`) — reads `__processor_tags__` dict for modality/category filtering.
-4. **Progress Callbacks** (`grdk/core/executor.py`) — forwards `progress_callback` to each processor's `apply()`, rescales per-step progress.
-5. **Exception Handling** (`grdk/core/executor.py`) — imports `grdl.exceptions.GrdlError` with graceful fallback, wraps in `RuntimeError`.
+1. **Processor Discovery** (`grdl_rt.execution.discovery`) — scans `grdl.image_processing` and `grdl.coregistration` via `inspect.getmembers()`.
+2. **GPU Dispatch** (`grdl_rt.execution.gpu`) — wraps processor execution with optional CuPy acceleration, checks `__gpu_compatible__` flag.
+3. **Tag Filtering** (`grdl_rt.execution.discovery`) — reads `__processor_tags__` dict for modality/category filtering.
+4. **Progress Callbacks** (`grdl_rt.execution.executor`) — forwards `progress_callback` to each processor's `apply()`, rescales per-step progress.
+5. **Exception Handling** (`grdl_rt.execution.executor`) — imports `grdl.exceptions.GrdlError` with graceful fallback, wraps in `RuntimeError`.
 6. **Data Prep Delegation** (`grdk/widgets/geodev/ow_chipper.py`) — optionally uses `grdl.data_prep.Normalizer` for post-extraction normalization.
 
 ## File Inventory
 
-### `grdk/core/` (no Qt)
+### `grdl_rt.execution` (from grdl-runtime, no Qt)
 
-| File | Purpose |
-|------|---------|
-| `chip.py` | Chip, ChipSet, ChipLabel models |
-| `config.py` | GrdkConfig dataclass (loaded from `~/.grdl/grdk_config.json`) |
-| `discovery.py` | `discover_processors()` — scans GRDL for transform/coregistration classes |
-| `dsl.py` | DSL compiler (Python decorator ↔ YAML) |
-| `executor.py` | WorkflowExecutor — runs pipeline steps with progress callbacks |
-| `gpu.py` | GpuBackend — CuPy GPU dispatch with CPU fallback |
-| `project.py` | Project model (directory structure, manifest) |
-| `tags.py` | Tag taxonomy and processor filtering |
-| `workflow.py` | WorkflowDefinition, WorkflowStep models |
+These modules live in the `grdl-runtime` package and are imported by GRDK widgets as `from grdl_rt.execution.<module> import ...`:
 
-### `grdk/catalog/` (no Qt)
+| Module | Key Types Used by Widgets |
+|--------|--------------------------|
+| `discovery` | `discover_processors()`, `get_processor_tags()`, `filter_processors()` |
+| `gpu` | `GpuBackend` |
+| `workflow` | `WorkflowDefinition`, `ProcessingStep`, `WorkflowState` |
+| `dsl` | `DslCompiler` |
+| `chip` | `Chip`, `ChipSet`, `ChipLabel`, `PolygonRegion` |
+| `tags` | `WorkflowTags`, `ProjectTags` |
+| `project` | `GrdkProject` |
+| `config` | `GrdkConfig`, `load_config()` |
+| `executor` | `WorkflowExecutor` |
 
-| File | Purpose |
-|------|---------|
-| `database.py` | ArtifactCatalog — SQLite + FTS5 |
-| `models.py` | Artifact, ArtifactType models |
-| `pool.py` | ThreadExecutorPool for background installs |
-| `resolver.py` | Catalog path resolution (env → config → default) |
-| `updater.py` | UpdateChecker — PyPI/Conda repodata polling |
+### `grdl_rt.catalog` (from grdl-runtime, no Qt)
+
+These modules live in the `grdl-runtime` package and are imported by GRDK widgets as `from grdl_rt.catalog.<module> import ...`:
+
+| Module | Key Types Used by Widgets |
+|--------|--------------------------|
+| `database` | `ArtifactCatalog` (SQLite + FTS5) |
+| `models` | `Artifact`, `UpdateResult` |
+| `resolver` | `resolve_catalog_path()` |
+| `updater` | `ArtifactUpdateWorker` |
+| `pool` | `ThreadExecutorPool` |
 
 ### `grdk/viewers/` (Qt widgets, no Orange)
 
@@ -124,7 +140,7 @@ pip install -e ".[gpu,dev]"
 
 ## Standards
 
-Follow GRDL's development standards (see `C:\projects\grdl\CLAUDE.md`):
+Follow GRDL's development standards (see `../grdl/CLAUDE.md`):
 
 - **PEP 8/257/484** — naming, docstrings, type hints
 - **NumPy-style docstrings** — Parameters, Returns, Raises sections
@@ -136,7 +152,7 @@ Follow GRDL's development standards (see `C:\projects\grdl\CLAUDE.md`):
 
 ### Additional GRDK Standards
 
-- **core/ and catalog/ must not import Qt** — keep GUI-free for headless execution.
+- **Execution and catalog logic lives in grdl-runtime** — GRDK widgets import from `grdl_rt.execution` and `grdl_rt.catalog`, not from local `grdk/core/` or `grdk/catalog/` directories (these do not exist).
 - **Qt imports use PyQt6 directly** — do not use AnyQt or PyQt5. Import from `PyQt6.QtWidgets`, `PyQt6.QtCore`, `PyQt6.QtGui`. Use `from PyQt6.QtCore import pyqtSignal as Signal` for signal declarations.
 - **Orange widgets** follow the `ow_<name>.py` naming convention.
 - **Signal types** are defined in `_signals.py` and wrap core models.
@@ -175,8 +191,8 @@ Tests are in `tests/` following `test_<module>.py` naming. Widget tests are in `
 
 | Layer | Test Approach | Qt Required |
 |-------|---------------|-------------|
-| `core/` | Unit tests with synthetic numpy arrays | No |
-| `catalog/` | Unit tests with temp SQLite databases | No |
+| `grdl_rt.execution` | Tests in grdl-runtime repo | No |
+| `grdl_rt.catalog` | Tests in grdl-runtime repo | No |
 | `viewers/image_canvas` | Pure function tests (normalize_array) + Qt widget tests | Partial |
 | `widgets/` | Import smoke tests, skip if no display | Yes (skipped) |
 | GRDL integration | Mock-based tests for discovery, GPU flag, callbacks | No |

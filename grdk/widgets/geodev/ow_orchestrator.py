@@ -30,7 +30,7 @@ Created
 
 Modified
 --------
-2026-02-06
+2026-02-16
 """
 
 # Standard library
@@ -279,7 +279,7 @@ class OWOrchestrator(OWBaseWidget):
 
         proc_name = item.text()
         proc_class = self._processors.get(proc_name)
-        version = getattr(proc_class, '_processor_version', '') if proc_class else ''
+        version = getattr(proc_class, '__processor_version__', '') if proc_class else ''
 
         step = ProcessingStep(
             processor_name=proc_name,

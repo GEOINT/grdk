@@ -29,7 +29,7 @@ Created
 
 Modified
 --------
-2026-02-06
+2026-02-16
 """
 
 # Standard library
@@ -54,7 +54,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-# GRDK internal
+# GRDL vocabulary enums
+from grdl.vocabulary import DetectionType, ImageModality, SegmentationType
+
+# GRDL Runtime internal
 from grdl_rt.execution.dsl import DslCompiler
 from grdl_rt.execution.tags import (
     DetectionType,
