@@ -199,7 +199,7 @@ class TestColormaps:
 # ---------------------------------------------------------------------------
 
 try:
-    from PySide6.QtGui import QImage
+    from PyQt6.QtGui import QImage
     from grdk.viewers.image_canvas import array_to_qimage, ImageCanvasThumbnail
     _QT_SKIP = False
 except (ImportError, RuntimeError):

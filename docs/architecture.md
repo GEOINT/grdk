@@ -6,7 +6,7 @@
 Orange Data Mining Canvas
     |
     v
-GRDK Widgets (ow_*.py)          <-- GUI layer (PySide6 + Orange)
+GRDK Widgets (ow_*.py)          <-- GUI layer (PyQt6 + Orange)
     |
     +-- grdk/viewers/            <-- Embeddable Qt components
     |       ImageCanvas, NapariStackViewer, ChipGallery
@@ -29,7 +29,7 @@ GRDL Library (grdl package)     <-- Image processing engine
 
 ### Rule 1: No Qt in grdl_rt.execution or grdl_rt.catalog
 
-These layers (provided by the `grdl-runtime` package) must remain importable without PySide6 installed. This enables:
+These layers (provided by the `grdl-runtime` package) must remain importable without PyQt6 installed. This enables:
 - Headless workflow execution (`python -m grdl_rt workflow.yaml`)
 - Server-side batch processing
 - Unit testing without a display

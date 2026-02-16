@@ -39,7 +39,7 @@ from typing import Optional
 from orangewidget import gui
 from orangewidget.widget import OWBaseWidget, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QComboBox,
     QLabel,
     QLineEdit,

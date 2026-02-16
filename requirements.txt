@@ -37,7 +37,7 @@ packaging>=21.0
 # Used by: widgets/admin/*, widgets/geodev/*, widgets/_display_controls.py,
 #          widgets/_param_controls.py, viewers/image_canvas.py, viewers/chip_gallery.py,
 #          viewers/stack_viewer.py
-PySide6>=6.5
+PyQt6>=6.5
 
 # Orange Canvas widget framework — all widget modules
 # Used by: widgets/admin/*, widgets/geodev/*

@@ -41,7 +41,7 @@ from orangewidget import gui
 from orangewidget.settings import Setting
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QComboBox,
     QLabel,
     QVBoxLayout,
@@ -72,7 +72,7 @@ class OWProcessor(OWBaseWidget):
     priority = 65
 
     class Outputs:
-        pipeline = Output("Pipeline", ProcessingPipelineSignal)
+        pipeline = Output("Pipeline", ProcessingPipelineSignal, auto_summary=False)
 
     selected_processor: str = Setting("")
 

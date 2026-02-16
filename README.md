@@ -19,7 +19,7 @@ GRDK turns GRDL's image processing algorithms into a visual drag-and-drop workfl
 # Install in editable mode (core only)
 pip install -e ".[dev]"
 
-# With GUI support (PySide6 + Orange + napari)
+# With GUI support (PyQt6 + Orange + napari)
 pip install -e ".[gui,dev]"
 
 # With GPU acceleration (CuPy + PyTorch)
@@ -65,7 +65,7 @@ docs/             # Architecture and API documentation
 | pyyaml | Yes | Workflow DSL serialization |
 | requests, packaging | Yes | Catalog update checking |
 | orange3, orange-widget-base | GUI | Widget framework |
-| PySide6 | GUI | Qt6 widget toolkit |
+| PyQt6 | GUI | Qt6 widget toolkit |
 | napari | GUI | Stack viewer with polygon drawing |
 | cupy-cuda12x | GPU | CUDA-accelerated array operations |
 | torch | GPU | ML model inference |
@@ -182,7 +182,7 @@ pytest tests/ --cov=grdk --cov-report=term-missing
 
 ## Remote GUI Visualization
 
-GRDK's GUI can be displayed on a remote machine (via SSH X11 forwarding) or from inside a Docker/Podman container. PySide6 (Qt6) requires the X11/XCB platform plugin and associated libraries on the remote/container side, and a running X server on the host side.
+GRDK's GUI can be displayed on a remote machine (via SSH X11 forwarding) or from inside a Docker/Podman container. PyQt6 (Qt6) requires the X11/XCB platform plugin and associated libraries on the remote/container side, and a running X server on the host side.
 
 ### Prerequisites (Remote / Container Side)
 
@@ -244,7 +244,7 @@ export QT_QUICK_BACKEND=software
 
 # Install and run
 pip install -e ".[gui]"
-python -c "from PySide6.QtWidgets import QApplication; print('PySide6 OK')"  # Quick test
+python -c "from PyQt6.QtWidgets import QApplication; print('PyQt6 OK')"  # Quick test
 orange-canvas  # Launch GRDK GUI
 ```
 

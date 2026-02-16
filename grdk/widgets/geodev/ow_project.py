@@ -42,7 +42,7 @@ from orangewidget import gui
 from orangewidget.settings import Setting
 from orangewidget.widget import OWBaseWidget, Output, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QFileDialog,
     QLabel,
     QLineEdit,
@@ -71,7 +71,7 @@ class OWGrdkProject(OWBaseWidget):
     priority = 10
 
     class Outputs:
-        project = Output("Project", GrdkProjectSignal)
+        project = Output("Project", GrdkProjectSignal, auto_summary=False)
 
     class Warning(OWBaseWidget.Warning):
         no_project = Msg("No project loaded.")

@@ -41,7 +41,7 @@ from orangewidget import gui
 from orangewidget.settings import Setting
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -85,11 +85,11 @@ class OWPublisher(OWBaseWidget):
     priority = 80
 
     class Inputs:
-        pipeline = Input("Pipeline", ProcessingPipelineSignal)
-        project = Input("Project", GrdkProjectSignal)
+        pipeline = Input("Pipeline", ProcessingPipelineSignal, auto_summary=False)
+        project = Input("Project", GrdkProjectSignal, auto_summary=False)
 
     class Outputs:
-        artifact = Output("Workflow Artifact", WorkflowArtifactSignal)
+        artifact = Output("Workflow Artifact", WorkflowArtifactSignal, auto_summary=False)
 
     class Warning(OWBaseWidget.Warning):
         no_pipeline = Msg("No pipeline connected.")

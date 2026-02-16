@@ -42,7 +42,7 @@ from orangewidget import gui
 from orangewidget.settings import Setting
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
     QLabel,
@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
 )
+from PyQt6.QtCore import Qt
 
 # GRDK internal
 from grdk.widgets._signals import GrdkProjectSignal, ImageStack
@@ -113,10 +114,10 @@ class OWImageLoader(OWBaseWidget):
     priority = 20
 
     class Inputs:
-        project = Input("Project", GrdkProjectSignal, default=True)
+        project = Input("Project", GrdkProjectSignal, default=True, auto_summary=False)
 
     class Outputs:
-        image_stack = Output("Image Stack", ImageStack)
+        image_stack = Output("Image Stack", ImageStack, auto_summary=False)
 
     class Warning(OWBaseWidget.Warning):
         no_images = Msg("No images loaded.")
@@ -141,7 +142,7 @@ class OWImageLoader(OWBaseWidget):
         self._list_widget.setDragDropMode(
             QAbstractItemView.DragDropMode.InternalMove
         )
-        self._list_widget.setDefaultDropAction(1)  # MoveAction
+        self._list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
         self._list_widget.model().rowsMoved.connect(self._on_reorder)
         box.layout().addWidget(self._list_widget)
 
@@ -220,7 +221,7 @@ class OWImageLoader(OWBaseWidget):
         new_names = []
         for i in range(self._list_widget.count()):
             item = self._list_widget.item(i)
-            path = item.data(256)  # Qt.UserRole
+            path = item.data(Qt.ItemDataRole.UserRole)
             for j, name in enumerate(self._names):
                 if name == path or self._names[j] == item.text():
                     new_order.append(self._readers[j])
@@ -243,7 +244,7 @@ class OWImageLoader(OWBaseWidget):
                 name = Path(filepath).name
                 self._names.append(name)
                 item = QListWidgetItem(name)
-                item.setData(256, filepath)  # Qt.UserRole
+                item.setData(Qt.ItemDataRole.UserRole, filepath)
 
                 # Add shape/dtype info as tooltip
                 try:
@@ -258,7 +259,7 @@ class OWImageLoader(OWBaseWidget):
                 self.Warning.load_failed(Path(filepath).name)
 
         self.file_paths = [
-            self._list_widget.item(i).data(256)
+            self._list_widget.item(i).data(Qt.ItemDataRole.UserRole)
             for i in range(self._list_widget.count())
         ]
         self._emit_stack()

@@ -40,7 +40,7 @@ from typing import List, Optional
 from orangewidget import gui
 from orangewidget.widget import OWBaseWidget, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QFileDialog,
     QLabel,
     QListWidget,
@@ -51,7 +51,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt
+from PyQt6.QtCore import Qt
 
 # GRDK internal
 from grdl_rt.catalog.models import Artifact

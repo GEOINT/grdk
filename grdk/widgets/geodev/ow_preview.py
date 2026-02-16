@@ -43,14 +43,14 @@ import numpy as np
 from orangewidget import gui
 from orangewidget.widget import OWBaseWidget, Input, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QGridLayout,
     QLabel,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt
+from PyQt6.QtCore import Qt
 
 # GRDK internal
 from grdl_rt.execution.discovery import discover_processors
@@ -77,8 +77,8 @@ class OWPreview(OWBaseWidget):
     priority = 75
 
     class Inputs:
-        chip_set = Input("Chip Set", ChipSetSignal)
-        pipeline = Input("Pipeline", ProcessingPipelineSignal)
+        chip_set = Input("Chip Set", ChipSetSignal, auto_summary=False)
+        pipeline = Input("Pipeline", ProcessingPipelineSignal, auto_summary=False)
 
     class Warning(OWBaseWidget.Warning):
         no_chips = Msg("No chips connected.")

@@ -42,7 +42,7 @@ from orangewidget import gui
 from orangewidget.settings import Setting
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QComboBox,
     QLabel,
     QPushButton,
@@ -67,10 +67,10 @@ class OWCoRegister(OWBaseWidget):
     priority = 30
 
     class Inputs:
-        image_stack = Input("Image Stack", ImageStack)
+        image_stack = Input("Image Stack", ImageStack, auto_summary=False)
 
     class Outputs:
-        image_stack = Output("Image Stack", ImageStack)
+        image_stack = Output("Image Stack", ImageStack, auto_summary=False)
 
     class Warning(OWBaseWidget.Warning):
         no_input = Msg("No image stack received.")

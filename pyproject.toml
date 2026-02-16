@@ -31,23 +31,21 @@ dependencies = [
     "numpy>=1.20",
     "scipy>=1.7",
     "grdl-runtime>=0.1.0",
-]
-
-[project.optional-dependencies]
-gui = [
-    "PySide6>=6.5",
+    "PyQt6>=6.5",
     "orange3>=3.36",
     "orange-widget-base",
     "napari>=0.4",
-]
-gpu = [
     "grdl-runtime[gpu]>=0.1.0",
 ]
+[project.optional-dependencies]
 dev = [
     "pytest",
     "black",
     "mypy",
 ]
+
+[project.scripts]
+grdk-canvas = "grdk._launcher:main"
 
 [project.entry-points."orange.widgets"]
 "GEODEV" = "grdk.widgets.geodev"

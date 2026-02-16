@@ -39,7 +39,7 @@ from typing import Optional
 from orangewidget import gui
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QTabWidget,
@@ -68,10 +68,10 @@ class OWLabeler(OWBaseWidget):
     priority = 60
 
     class Inputs:
-        chip_set = Input("Chip Set", ChipSetSignal)
+        chip_set = Input("Chip Set", ChipSetSignal, auto_summary=False)
 
     class Outputs:
-        chip_set = Output("Chip Set", ChipSetSignal)
+        chip_set = Output("Chip Set", ChipSetSignal, auto_summary=False)
 
     class Warning(OWBaseWidget.Warning):
         no_chips = Msg("No chips received.")

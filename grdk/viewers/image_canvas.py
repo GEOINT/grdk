@@ -9,7 +9,7 @@ image display components.
 
 Dependencies
 ------------
-PySide6
+PyQt6
 
 Author
 ------
@@ -42,9 +42,9 @@ from typing import Any, Optional
 import numpy as np
 
 try:
-    from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
-    from PySide6.QtGui import QImage, QPixmap, QPainter
-    from PySide6.QtCore import Qt, Signal
+    from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
+    from PyQt6.QtGui import QImage, QPixmap, QPainter
+    from PyQt6.QtCore import Qt, pyqtSignal as Signal
 
     _QT_AVAILABLE = True
 except ImportError:

@@ -44,7 +44,7 @@ from orangewidget import gui
 from orangewidget.settings import Setting
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QLabel,
@@ -114,10 +114,10 @@ class OWChipper(OWBaseWidget):
     priority = 50
 
     class Inputs:
-        image_stack = Input("Image Stack", ImageStack)
+        image_stack = Input("Image Stack", ImageStack, auto_summary=False)
 
     class Outputs:
-        chip_set = Output("Chip Set", ChipSetSignal)
+        chip_set = Output("Chip Set", ChipSetSignal, auto_summary=False)
 
     class Warning(OWBaseWidget.Warning):
         no_stack = Msg("No image stack connected.")

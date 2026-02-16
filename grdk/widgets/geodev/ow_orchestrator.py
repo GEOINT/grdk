@@ -45,7 +45,7 @@ import numpy as np
 from orangewidget import gui
 from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -59,8 +59,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtCore import Qt, QTimer
 
 # GRDK internal
 from grdl_rt.execution.discovery import discover_processors, get_processor_tags
@@ -111,10 +111,10 @@ class OWOrchestrator(OWBaseWidget):
     priority = 70
 
     class Inputs:
-        chip_set = Input("Chip Set", ChipSetSignal)
+        chip_set = Input("Chip Set", ChipSetSignal, auto_summary=False)
 
     class Outputs:
-        pipeline = Output("Pipeline", ProcessingPipelineSignal)
+        pipeline = Output("Pipeline", ProcessingPipelineSignal, auto_summary=False)
 
     class Warning(OWBaseWidget.Warning):
         no_chips = Msg("No chips connected for preview.")
