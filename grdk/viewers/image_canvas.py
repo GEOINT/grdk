@@ -35,16 +35,16 @@ Modified
 """
 
 # Standard library
-from dataclasses import dataclass, replace
-from typing import Any, Optional
+from dataclasses import dataclass, field, replace
+from typing import Any, Callable, Optional
 
 # Third-party
 import numpy as np
 
 try:
-    from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
+    from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QRubberBand
     from PyQt6.QtGui import QImage, QPixmap, QPainter
-    from PyQt6.QtCore import Qt, pyqtSignal as Signal
+    from PyQt6.QtCore import QPoint, QRect, QSize, Qt, pyqtSignal as Signal
 
     _QT_AVAILABLE = True
 except ImportError:
@@ -175,6 +175,7 @@ class DisplaySettings:
     colormap: str = 'grayscale'
     band_index: Optional[int] = None
     gamma: float = 1.0
+    remap_function: Optional[Callable] = field(default=None, repr=False)
 
 
 # ---------------------------------------------------------------------------
@@ -211,23 +212,47 @@ def normalize_array(
     if np.iscomplexobj(arr):
         arr = np.abs(arr)
 
-    # 2. Band selection
+    # 2. Band selection — channels-first convention: (C, H, W)
     if arr.ndim == 3:
+        num_bands = arr.shape[0]
         if settings.band_index is not None:
-            # Extract single band
-            idx = min(settings.band_index, arr.shape[2] - 1)
-            arr = arr[:, :, idx]
-        elif arr.shape[2] == 3:
-            # Keep as RGB — will skip colormap
-            pass
-        elif arr.shape[2] >= 3:
-            # Use first 3 bands as RGB
-            arr = arr[:, :, :3]
+            idx = min(settings.band_index, num_bands - 1)
+            arr = arr[idx]  # (H, W)
+        elif num_bands == 3:
+            pass  # Keep as (3, H, W) → RGB
+        elif num_bands >= 3:
+            arr = arr[:3]  # First 3 bands as RGB
         else:
-            # Single band
-            arr = arr[:, :, 0]
+            arr = arr[0]  # Single band → (H, W)
 
     is_rgb = arr.ndim == 3
+
+    # Remap path: SAR-specific remap functions (from grdl_sartoolbox)
+    # replace the standard window/level/percentile pipeline but
+    # contrast, brightness, and gamma are still applied on top.
+    # Remap functions expect 2D (H, W) input.
+    if settings.remap_function is not None and arr.ndim == 2:
+        try:
+            arr = settings.remap_function(arr)
+            if arr.dtype != np.uint8:
+                arr = np.clip(arr, 0, 255).astype(np.uint8)
+            # Apply contrast, brightness, gamma on the remap output
+            arr = arr.astype(np.float64) / 255.0
+            if settings.contrast != 1.0 or settings.brightness != 0.0:
+                arr = settings.contrast * (arr - 0.5) + 0.5 + settings.brightness
+            if settings.gamma != 1.0:
+                arr = np.clip(arr, 0.0, 1.0)
+                arr = np.power(arr, 1.0 / settings.gamma)
+            arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+            # Apply colormap if grayscale
+            if settings.colormap != 'grayscale':
+                colormaps = _get_colormaps()
+                lut = colormaps.get(settings.colormap)
+                if lut is not None:
+                    arr = lut[arr]
+            return arr
+        except Exception:
+            pass  # Fall through to standard pipeline on error
 
     # 3. Window/level
     arr = arr.astype(np.float64)
@@ -292,6 +317,14 @@ def array_to_qimage(
         raise ImportError("Qt is required for array_to_qimage")
 
     display = normalize_array(arr, settings)
+
+    # Channels-first (C, H, W) → channels-last (H, W, C) for QImage.
+    # Distinguish from colormap output (H, W, 3) by checking dim sizes.
+    if (display.ndim == 3
+            and display.shape[0] < display.shape[1]
+            and display.shape[0] < display.shape[2]):
+        display = np.transpose(display, (1, 2, 0))
+
     display = np.ascontiguousarray(display)
 
     if display.ndim == 2:
@@ -303,7 +336,7 @@ def array_to_qimage(
         return QImage(display.data, w, h, bpl, QImage.Format.Format_RGB888).copy()
     else:
         # Fallback: first channel
-        band = display[:, :, 0]
+        band = display[:, :, 0] if display.ndim == 3 else display
         h, w = band.shape
         band = np.ascontiguousarray(band)
         return QImage(band.data, w, h, w, QImage.Format.Format_Grayscale8).copy()
@@ -376,6 +409,13 @@ if _QT_AVAILABLE:
             )
             self.setBackgroundBrush(Qt.GlobalColor.darkGray)
 
+            # Zoom box (Ctrl + left-drag)
+            self._zoom_box_active = False
+            self._zoom_box_origin = QPoint()
+            self._zoom_rubber_band = QRubberBand(
+                QRubberBand.Shape.Rectangle, self,
+            )
+
         def set_array(self, arr: np.ndarray) -> None:
             """Set the source image array and refresh display.
 
@@ -446,6 +486,41 @@ if _QT_AVAILABLE:
 
         # --- Event overrides ---
 
+        def mousePressEvent(self, event: Any) -> None:
+            """Start zoom box on Ctrl+left-click, else default drag."""
+            if (event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                    and event.button() == Qt.MouseButton.LeftButton):
+                self._zoom_box_active = True
+                self._zoom_box_origin = event.pos()
+                self._zoom_rubber_band.setGeometry(
+                    QRect(self._zoom_box_origin, QSize()),
+                )
+                self._zoom_rubber_band.show()
+                event.accept()
+                return
+            super().mousePressEvent(event)
+
+        def mouseReleaseEvent(self, event: Any) -> None:
+            """Finish zoom box and fit the selected region in view."""
+            if (self._zoom_box_active
+                    and event.button() == Qt.MouseButton.LeftButton):
+                self._zoom_box_active = False
+                self._zoom_rubber_band.hide()
+                rect = QRect(
+                    self._zoom_box_origin, event.pos(),
+                ).normalized()
+                # Ignore tiny accidental drags
+                if rect.width() > 5 and rect.height() > 5:
+                    scene_rect = self.mapToScene(rect).boundingRect()
+                    self.fitInView(
+                        scene_rect,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                    )
+                    self._update_zoom_level()
+                event.accept()
+                return
+            super().mouseReleaseEvent(event)
+
         def wheelEvent(self, event: Any) -> None:
             """Zoom in/out on scroll wheel."""
             delta = event.angleDelta().y()
@@ -464,7 +539,13 @@ if _QT_AVAILABLE:
             self.fit_in_view()
 
         def mouseMoveEvent(self, event: Any) -> None:
-            """Emit pixel coordinates and value on hover."""
+            """Emit pixel coordinates and value on hover, or update zoom box."""
+            if self._zoom_box_active:
+                self._zoom_rubber_band.setGeometry(
+                    QRect(self._zoom_box_origin, event.pos()).normalized(),
+                )
+                event.accept()
+                return
             super().mouseMoveEvent(event)
             if self._source is None:
                 return
@@ -474,13 +555,16 @@ if _QT_AVAILABLE:
             row = int(scene_pos.y())
 
             if self._source.ndim >= 2:
-                h = self._source.shape[0]
-                w = self._source.shape[1]
+                if self._source.ndim == 2:
+                    h, w = self._source.shape
+                else:
+                    # Channels-first: (C, H, W)
+                    h, w = self._source.shape[1], self._source.shape[2]
                 if 0 <= row < h and 0 <= col < w:
                     if self._source.ndim == 2:
                         value = self._source[row, col]
                     else:
-                        value = self._source[row, col, :]
+                        value = self._source[:, row, col]
                     self.pixel_hovered.emit(row, col, value)
 
         # --- Internal ---
