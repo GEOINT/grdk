@@ -46,6 +46,7 @@ dev = [
 
 [project.scripts]
 grdk-canvas = "grdk._launcher:main"
+grdk-viewer = "grdk.viewers.main_window:main"
 
 [project.entry-points."orange.widgets"]
 "GEODEV" = "grdk.widgets.geodev"

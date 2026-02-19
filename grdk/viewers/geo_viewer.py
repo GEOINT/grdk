@@ -1,0 +1,584 @@
+# -*- coding: utf-8 -*-
+"""
+GeoImageViewer - Single-pane geospatial image viewer.
+
+Composite widget combining TiledImageCanvas, CoordinateBar, and
+VectorOverlayLayer into a self-contained viewer pane.  Provides
+``open_any()`` and ``create_geolocation()`` as public module-level
+functions for reuse by DualGeoViewer and scripts.
+
+Dependencies
+------------
+PyQt6
+
+Author
+------
+Claude Code (Anthropic)
+
+License
+-------
+MIT License
+Copyright (c) 2024 geoint.org
+See LICENSE file for full text.
+
+Created
+-------
+2026-02-17
+
+Modified
+--------
+2026-02-18
+"""
+
+# Standard library
+import contextlib
+import os
+from pathlib import Path
+from typing import Any, Optional, Union
+
+# Third-party
+import numpy as np
+
+try:
+    from PyQt6.QtWidgets import QApplication, QVBoxLayout, QWidget
+    from PyQt6.QtCore import Qt, pyqtSignal as Signal
+
+    _QT_AVAILABLE = True
+except ImportError:
+    _QT_AVAILABLE = False
+
+from grdk.viewers.band_info import BandInfo, get_band_info
+from grdk.viewers.image_canvas import DisplaySettings
+from grdk.viewers.tiled_canvas import TiledImageCanvas
+from grdk.viewers.coordinate_bar import CoordinateBar
+from grdk.viewers.vector_overlay import VectorOverlayLayer
+
+
+# ---------------------------------------------------------------------------
+# Public module-level utilities (reusable by DualGeoViewer, scripts, etc.)
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def _suppress_stderr():
+    """Temporarily silence C-level stderr (e.g. GDAL TXTFMT warnings)."""
+    stderr_fd = 2
+    try:
+        old_fd = os.dup(stderr_fd)
+    except OSError:
+        yield
+        return
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, stderr_fd)
+        os.close(devnull)
+        yield
+    finally:
+        os.dup2(old_fd, stderr_fd)
+        os.close(old_fd)
+
+
+def _find_biomass_product_dir(path: Path) -> Optional[Path]:
+    """Locate the BIOMASS product directory containing annotation/.
+
+    BIOMASS products may be nested: the user-provided directory may
+    contain a single child directory (often with the same name) that
+    holds the actual ``annotation/`` and ``measurement/`` folders.
+
+    Returns the product directory path, or None if not found.
+    """
+    if (path / "annotation").is_dir():
+        return path
+    # Check immediate subdirectories for nested structure
+    for child in path.iterdir():
+        if child.is_dir() and (child / "annotation").is_dir():
+            return child
+    return None
+
+
+def _find_sentinel2_band_file(safe_dir: Path) -> Optional[Path]:
+    """Find the best JP2 band file inside a Sentinel-2 .SAFE directory.
+
+    Prefers TCI (True Color Image) at 10m, then B04 (Red) at 10m,
+    then any spectral band JP2 at the highest resolution available.
+
+    Returns the JP2 file path, or None if not found.
+    """
+    # Locate IMG_DATA directory inside GRANULE
+    granule_dir = safe_dir / "GRANULE"
+    if not granule_dir.is_dir():
+        return None
+
+    img_data_dirs = list(granule_dir.glob("*/IMG_DATA"))
+    if not img_data_dirs:
+        return None
+    img_data = img_data_dirs[0]
+
+    # Search in resolution order: 10m > 20m > 60m
+    for res_dir_name in ("R10m", "R20m", "R60m"):
+        res_dir = img_data / res_dir_name
+        if not res_dir.is_dir():
+            continue
+        jp2_files = list(res_dir.glob("*.jp2"))
+        if not jp2_files:
+            continue
+
+        # Prefer TCI (True Color Image — pre-composed RGB)
+        for f in jp2_files:
+            if "_TCI_" in f.name:
+                return f
+
+        # Prefer B04 (Red band)
+        for f in jp2_files:
+            if "_B04_" in f.name:
+                return f
+
+        # Prefer any spectral band (B01–B12, B8A)
+        for f in jp2_files:
+            if "_B" in f.name:
+                return f
+
+        # Any JP2 in this resolution tier
+        return jp2_files[0]
+
+    # Fallback: any JP2 under IMG_DATA (flat structure)
+    jp2_files = list(img_data.glob("*.jp2"))
+    if jp2_files:
+        for f in jp2_files:
+            if "_TCI_" in f.name:
+                return f
+        for f in jp2_files:
+            if "_B04_" in f.name:
+                return f
+        return jp2_files[0]
+
+    return None
+
+
+def open_any(filepath: Union[str, Path]) -> Any:
+    """Open any supported grdl imagery file or directory.
+
+    Tries all grdl modality openers in priority order: directory-based
+    formats first (BIOMASS, Sentinel-2 .SAFE), then SAR (so NITF files
+    containing SICD complex data are handled correctly), then generic
+    formats, then EO, IR, and multispectral.
+
+    Parameters
+    ----------
+    filepath : str or Path
+        Path to the image file or directory.
+
+    Returns
+    -------
+    ImageReader
+        grdl reader instance.
+
+    Raises
+    ------
+    ValueError
+        If no opener can handle the file.
+    """
+    path = Path(filepath)
+    errors = []
+
+    # Suppress C-level GDAL warnings (e.g. "TXTFMT: Invalid field value")
+    # that are emitted to stderr when reading NITF/SICD files.
+    with _suppress_stderr():
+        # 0. Directory-based formats
+        if path.is_dir():
+            # BIOMASS — directory name contains 'BIO' and product type
+            if 'BIO' in path.name.upper():
+                product_dir = _find_biomass_product_dir(path)
+                if product_dir is not None:
+                    try:
+                        from grdl.IO import open_biomass
+                        return open_biomass(product_dir)
+                    except (ValueError, ImportError, Exception) as e:
+                        errors.append(f"BIOMASS: {e}")
+
+            # Sentinel-2 .SAFE directory
+            if path.name.upper().endswith('.SAFE'):
+                band_file = _find_sentinel2_band_file(path)
+                if band_file is not None:
+                    try:
+                        from grdl.IO.eo.sentinel2 import Sentinel2Reader
+                        return Sentinel2Reader(band_file)
+                    except (ValueError, ImportError, Exception) as e:
+                        errors.append(f"Sentinel-2 SAFE: {e}")
+
+        # 1. SAR first — NITF files may be SICD (complex SAR), not generic NITF
+        try:
+            from grdl.IO import open_sar
+            return open_sar(path)
+        except (ValueError, ImportError, Exception) as e:
+            errors.append(f"SAR: {e}")
+
+        # 2. Generic formats (GeoTIFF, NITF, HDF5, JP2)
+        try:
+            from grdl.IO import open_image
+            return open_image(path)
+        except (ValueError, ImportError, Exception) as e:
+            errors.append(f"Image: {e}")
+
+        # 3. EO-specific (Sentinel-2, etc.)
+        try:
+            from grdl.IO import open_eo
+            return open_eo(path)
+        except (ValueError, ImportError, Exception) as e:
+            errors.append(f"EO: {e}")
+
+        # 4. IR
+        try:
+            from grdl.IO import open_ir
+            return open_ir(path)
+        except (ValueError, ImportError, Exception) as e:
+            errors.append(f"IR: {e}")
+
+        # 5. Multispectral
+        try:
+            from grdl.IO import open_multispectral
+            return open_multispectral(path)
+        except (ValueError, ImportError, Exception) as e:
+            errors.append(f"MSI: {e}")
+
+    raise ValueError(
+        f"Could not open {filepath}. Tried all grdl openers:\n"
+        + "\n".join(f"  - {e}" for e in errors)
+    )
+
+
+def create_geolocation(reader: Any) -> Optional[Any]:
+    """Create the appropriate Geolocation from a reader type.
+
+    Dispatches by reader class to the matching grdl Geolocation
+    factory.  Returns None if geolocation cannot be determined
+    (the viewer will operate in pixel-only mode).
+
+    Parameters
+    ----------
+    reader : ImageReader
+        grdl reader instance.
+
+    Returns
+    -------
+    Optional[Geolocation]
+        Geolocation instance, or None.
+    """
+    # Lazy imports to avoid pulling in optional dependencies at module level
+    try:
+        from grdl.IO.sar.sicd import SICDReader
+        if isinstance(reader, SICDReader):
+            from grdl.geolocation import SICDGeolocation
+            return SICDGeolocation.from_reader(reader)
+    except ImportError:
+        pass
+
+    try:
+        from grdl.IO.sar.sentinel1_slc import Sentinel1SLCReader
+        if isinstance(reader, Sentinel1SLCReader):
+            from grdl.geolocation import Sentinel1SLCGeolocation
+            return Sentinel1SLCGeolocation.from_reader(reader)
+    except ImportError:
+        pass
+
+    try:
+        from grdl.IO.sar.biomass import BIOMASSL1Reader
+        if isinstance(reader, BIOMASSL1Reader):
+            gcps = reader.metadata.get('gcps')
+            if gcps:
+                from grdl.geolocation import GCPGeolocation
+                return GCPGeolocation.from_dict(
+                    {'gcps': gcps, 'crs': reader.metadata.get('crs', 'WGS84')},
+                    reader.metadata,
+                )
+    except ImportError:
+        pass
+
+    try:
+        from grdl.IO.geotiff import GeoTIFFReader
+        if isinstance(reader, GeoTIFFReader):
+            transform = reader.metadata.get('transform')
+            crs = reader.metadata.get('crs')
+            if transform and crs:
+                from grdl.geolocation import AffineGeolocation
+                return AffineGeolocation.from_reader(reader)
+    except ImportError:
+        pass
+
+    try:
+        from grdl.IO.nitf import NITFReader
+        if isinstance(reader, NITFReader):
+            transform = reader.metadata.get('transform')
+            crs = reader.metadata.get('crs')
+            if transform and crs:
+                from grdl.geolocation import AffineGeolocation
+                return AffineGeolocation.from_reader(reader)
+    except ImportError:
+        pass
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# GeoImageViewer widget
+# ---------------------------------------------------------------------------
+
+if _QT_AVAILABLE:
+
+    class GeoImageViewer(QWidget):
+        """Single-pane geospatial image viewer.
+
+        Composes a ``TiledImageCanvas`` with ``CoordinateBar`` and
+        ``VectorOverlayLayer`` into a self-contained viewer pane.
+        Supports opening files via grdl readers, accepting pre-loaded
+        arrays, and overlaying GeoJSON vector data.
+
+        Parameters
+        ----------
+        parent : QWidget, optional
+            Parent widget.
+
+        Signals
+        -------
+        band_info_changed(list)
+            Emitted when band info changes (e.g., after opening a file).
+            Payload is a ``List[BandInfo]``.
+        """
+
+        band_info_changed = Signal(list)
+
+        def __init__(self, parent: Optional[Any] = None) -> None:
+            super().__init__(parent)
+
+            self._reader: Optional[Any] = None
+            self._geolocation: Optional[Any] = None
+            self._band_info: list = []
+            self._metadata: Optional[Any] = None
+
+            # Core widgets
+            self._canvas = TiledImageCanvas(self)
+            self._coord_bar = CoordinateBar(self)
+            self._coord_bar.connect_canvas(self._canvas)
+
+            # Vector overlay (operates on canvas scene)
+            self._vector_overlay = VectorOverlayLayer(self._canvas._scene)
+
+            # Layout
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            layout.addWidget(self._canvas, 1)
+            layout.addWidget(self._coord_bar, 0)
+
+        # --- Public properties ---
+
+        @property
+        def canvas(self) -> TiledImageCanvas:
+            """The underlying image canvas."""
+            return self._canvas
+
+        @property
+        def display_settings(self) -> DisplaySettings:
+            """Current display settings (delegates to canvas)."""
+            return self._canvas.display_settings
+
+        @display_settings.setter
+        def display_settings(self, settings: DisplaySettings) -> None:
+            self._canvas.set_display_settings(settings)
+
+        @property
+        def geolocation(self) -> Optional[Any]:
+            """Current geolocation model, or None."""
+            return self._geolocation
+
+        @property
+        def metadata(self) -> Optional[Any]:
+            """Current image metadata, or None."""
+            return self._metadata
+
+        @property
+        def band_info(self) -> list:
+            """Current band info list (List[BandInfo])."""
+            return self._band_info
+
+        @property
+        def vector_overlay(self) -> VectorOverlayLayer:
+            """The vector overlay layer."""
+            return self._vector_overlay
+
+        # --- Loading ---
+
+        def open_file(self, filepath: str) -> None:
+            """Open an image file with auto-detection.
+
+            Uses ``open_any()`` to try all grdl openers, then creates
+            the appropriate geolocation model.
+
+            Parameters
+            ----------
+            filepath : str
+                Path to the image file.
+
+            Raises
+            ------
+            ValueError
+                If the file cannot be opened.
+            """
+            QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
+            try:
+                reader = open_any(filepath)
+                geo = create_geolocation(reader)
+                self.open_reader(reader, geolocation=geo)
+            finally:
+                QApplication.restoreOverrideCursor()
+
+        def open_reader(
+            self,
+            reader: Any,
+            geolocation: Optional[Any] = None,
+        ) -> None:
+            """Open an image from a grdl ImageReader.
+
+            Parameters
+            ----------
+            reader : ImageReader
+                grdl reader instance.
+            geolocation : Geolocation, optional
+                Geolocation model.  If None, the viewer operates in
+                pixel-only mode (no lat/lon display, no geographic
+                vector transforms).
+            """
+            QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
+            try:
+                # Close previous reader
+                if self._reader is not None:
+                    try:
+                        self._reader.close()
+                    except Exception:
+                        pass
+
+                self._reader = reader
+                self._geolocation = geolocation
+                self._metadata = getattr(reader, 'metadata', None)
+
+                # Auto-detect SICD and apply 2-98% contrast stretch
+                self._apply_auto_settings(reader)
+
+                # Update coordinate bar
+                self._coord_bar.set_geolocation(geolocation)
+
+                # Update vector overlay geolocation
+                self._vector_overlay.set_geolocation(geolocation)
+
+                # Extract and emit band info
+                self._band_info = get_band_info(reader)
+                self.band_info_changed.emit(self._band_info)
+
+                # Load into canvas
+                self._canvas.set_reader(reader)
+
+                # Fit image in view on first load
+                self._canvas.fit_in_view()
+            finally:
+                QApplication.restoreOverrideCursor()
+
+        def set_array(
+            self,
+            arr: np.ndarray,
+            geolocation: Optional[Any] = None,
+        ) -> None:
+            """Display a pre-loaded numpy array.
+
+            Parameters
+            ----------
+            arr : np.ndarray
+                Image data (2D, 3D, or complex).
+            geolocation : Geolocation, optional
+                Geolocation model for coordinate display.
+            """
+            if self._reader is not None:
+                try:
+                    self._reader.close()
+                except Exception:
+                    pass
+                self._reader = None
+
+            self._geolocation = geolocation
+            self._metadata = None
+            self._coord_bar.set_geolocation(geolocation)
+            self._vector_overlay.set_geolocation(geolocation)
+
+            # Emit band info for the array
+            if arr.ndim == 3:
+                # Channels-first: (C, H, W)
+                num_bands = arr.shape[0]
+                self._band_info = [
+                    BandInfo(i, f"Band {i}", "") for i in range(num_bands)
+                ]
+            else:
+                self._band_info = [BandInfo(0, "Band 0", "")]
+            self.band_info_changed.emit(self._band_info)
+
+            self._canvas.set_array(arr)
+
+            # Fit image in view on load
+            self._canvas.fit_in_view()
+
+        # --- Auto settings ---
+
+        def _apply_auto_settings(self, reader: Any) -> None:
+            """Apply sensible default display settings based on reader type.
+
+            For SICD (complex SAR) data, applies a 2-98% percentile
+            contrast stretch which is the standard default for SAR imagery.
+            """
+            try:
+                from grdl.IO.sar.sicd import SICDReader
+                if isinstance(reader, SICDReader):
+                    from dataclasses import replace
+                    settings = replace(
+                        self._canvas.display_settings,
+                        percentile_low=2.0,
+                        percentile_high=98.0,
+                    )
+                    self._canvas.set_display_settings(settings)
+                    return
+            except ImportError:
+                pass
+
+        # --- Vector overlays ---
+
+        def load_vector(self, filepath: str) -> None:
+            """Load a GeoJSON vector overlay.
+
+            Parameters
+            ----------
+            filepath : str
+                Path to a GeoJSON file.
+            """
+            self._vector_overlay.load_geojson(filepath)
+
+        def clear_vectors(self) -> None:
+            """Remove all vector overlay features."""
+            self._vector_overlay.clear()
+
+        # --- Export ---
+
+        def export_view(self, filepath: str) -> None:
+            """Save the current viewport as an image file.
+
+            Parameters
+            ----------
+            filepath : str
+                Output path.  Format determined by extension
+                (e.g., .png, .jpg).
+            """
+            pixmap = self._canvas.grab()
+            pixmap.save(filepath)
+
+else:
+
+    class GeoImageViewer:  # type: ignore[no-redef]
+        """Stub when Qt is unavailable."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise ImportError("Qt is required for GeoImageViewer")

@@ -46,7 +46,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QSlider,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -60,9 +59,21 @@ from grdk.viewers.image_canvas import (
 
 
 ALL_CONTROLS = (
-    'window', 'percentile', 'contrast', 'brightness',
+    'remap', 'window', 'percentile', 'contrast', 'brightness',
     'gamma', 'colormap', 'band',
 )
+
+# Discover available SAR remap functions
+_REMAP_FUNCTIONS: dict = {}
+try:
+    from grdl_sartoolbox.visualization.remap import (
+        get_remap_list,
+        get_remap_function,
+    )
+    for _name in get_remap_list():
+        _REMAP_FUNCTIONS[_name] = get_remap_function(_name)
+except ImportError:
+    pass
 
 
 def build_display_controls(
@@ -127,14 +138,42 @@ def build_display_controls(
         if 'gamma' in controls:
             s = replace(s, gamma=controls['gamma'].value())
 
+        if 'remap' in controls:
+            remap_name = controls['remap'].currentData()
+            if remap_name and remap_name in _REMAP_FUNCTIONS:
+                s = replace(s, remap_function=_REMAP_FUNCTIONS[remap_name])
+            else:
+                s = replace(s, remap_function=None)
+
         if 'colormap' in controls:
             s = replace(s, colormap=controls['colormap'].currentData())
 
         if 'band' in controls:
-            val = controls['band'].value()
-            s = replace(s, band_index=val if val >= 0 else None)
+            val = controls['band'].currentData()
+            s = replace(s, band_index=val if val is not None and val >= 0 else None)
 
         canvas.set_display_settings(s)
+
+    # --- SAR Remap ---
+    if 'remap' in visible and _REMAP_FUNCTIONS:
+        row = QHBoxLayout()
+        remap_label = QLabel("Remap:", group)
+        row.addWidget(remap_label)
+
+        remap_combo = QComboBox(group)
+        remap_combo.addItem("None (Standard)", "")
+        for name in _REMAP_FUNCTIONS:
+            remap_combo.addItem(name.title(), name)
+        remap_combo.currentIndexChanged.connect(lambda _: _update())
+        row.addWidget(remap_combo)
+
+        # Disabled by default — enabled when a SAR image is loaded
+        remap_label.setEnabled(False)
+        remap_combo.setEnabled(False)
+
+        layout.addLayout(row)
+        controls['remap'] = remap_combo
+        controls['remap_label'] = remap_label
 
     # --- Window/Level ---
     if 'window' in visible:
@@ -262,14 +301,45 @@ def build_display_controls(
         row = QHBoxLayout()
         row.addWidget(QLabel("Band:", group))
 
-        band_spin = QSpinBox(group)
-        band_spin.setRange(-1, 255)
-        band_spin.setValue(-1)
-        band_spin.setSpecialValueText("Auto")
-        band_spin.valueChanged.connect(lambda _: _update())
-        row.addWidget(band_spin)
+        band_combo = QComboBox(group)
+        band_combo.addItem("Auto", -1)
+        band_combo.currentIndexChanged.connect(lambda _: _update())
+        row.addWidget(band_combo)
 
         layout.addLayout(row)
-        controls['band'] = band_spin
+        controls['band'] = band_combo
+
+    # Attach a method to update the band combo when band info changes.
+    # Callers can use:  group.update_band_info(list_of_BandInfo)
+    def _update_band_combo(band_info_list: list) -> None:
+        combo = controls.get('band')
+        if combo is None:
+            return
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Auto", -1)
+        for info in band_info_list:
+            label = info.name
+            if info.description:
+                label = f"{info.name} \u2014 {info.description}"
+            combo.addItem(label, info.index)
+        combo.blockSignals(False)
+
+    group.update_band_info = _update_band_combo  # type: ignore[attr-defined]
+
+    def _set_remap_enabled(enabled: bool) -> None:
+        combo = controls.get('remap')
+        if combo is None:
+            return
+        combo.setEnabled(enabled)
+        label = controls.get('remap_label')
+        if label is not None:
+            label.setEnabled(enabled)
+        if not enabled:
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)  # Reset to "None (Standard)"
+            combo.blockSignals(False)
+
+    group.set_remap_enabled = _set_remap_enabled  # type: ignore[attr-defined]
 
     return group

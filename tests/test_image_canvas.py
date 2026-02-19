@@ -71,18 +71,20 @@ class TestNormalizeArray:
         assert result[0, 1] == 0    # |0+0j| = 0 → min → 0
 
     def test_3d_rgb(self):
-        """3-band array should pass through as RGB."""
-        arr = np.zeros((4, 4, 3), dtype=np.float32)
-        arr[:, :, 0] = 100  # R channel
+        """3-band channels-first (C, H, W) array should pass through as RGB."""
+        arr = np.zeros((3, 8, 8), dtype=np.float32)
+        arr[0] = 100  # R channel
         result = normalize_array(arr)
         assert result.dtype == np.uint8
         assert result.ndim == 3
-        assert result.shape[2] == 3
+        # Output is (3, H, W) — channels-first RGB
+        assert result.shape[0] == 3
 
     def test_3d_band_select(self):
         """band_index should select a specific band → 2D output."""
-        arr = np.zeros((4, 4, 5), dtype=np.float32)
-        arr[:, :, 2] = np.arange(16).reshape(4, 4).astype(np.float32)
+        # Channels-first: (C, H, W) = (5, 4, 4)
+        arr = np.zeros((5, 4, 4), dtype=np.float32)
+        arr[2] = np.arange(16).reshape(4, 4).astype(np.float32)
         settings = DisplaySettings(band_index=2)
         result = normalize_array(arr, settings)
         assert result.ndim == 2  # Single band → grayscale
@@ -216,10 +218,12 @@ class TestArrayToQImage:
         assert qimg.height() == 32
 
     def test_rgb_qimage(self):
-        arr = np.random.rand(16, 16, 3).astype(np.float32)
+        # Channels-first: (3, H, W)
+        arr = np.random.rand(3, 16, 16).astype(np.float32)
         qimg = array_to_qimage(arr)
         assert isinstance(qimg, QImage)
         assert qimg.width() == 16
+        assert qimg.height() == 16
 
 
 @pytest.mark.skipif(_QT_SKIP, reason="Qt not available")
