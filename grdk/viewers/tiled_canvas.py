@@ -134,6 +134,7 @@ if _QT_AVAILABLE:
                 self._tiled_mode = False
                 arr = reader.read_full()
                 super().set_array(arr)
+                self._request_fit_in_view()
                 return
 
             # Large image — tiled mode
@@ -250,6 +251,13 @@ if _QT_AVAILABLE:
 
         # --- Event overrides ---
 
+        def zoom_undo(self) -> None:
+            """Revert zoom and schedule tile update."""
+            super().zoom_undo()
+            if self._tiled_mode:
+                self._schedule_tile_update()
+                self.viewport_changed.emit()
+
         def wheelEvent(self, event: Any) -> None:
             """Zoom and schedule tile update."""
             super().wheelEvent(event)
@@ -292,7 +300,6 @@ if _QT_AVAILABLE:
                     if raw.ndim == 2:
                         h, w = raw.shape
                     else:
-                        # Channels-first: (C, H, W)
                         h, w = raw.shape[1], raw.shape[2]
                     if 0 <= local_r < h and 0 <= local_c < w:
                         if raw.ndim == 2:
@@ -302,7 +309,19 @@ if _QT_AVAILABLE:
                         self.pixel_hovered.emit(row, col, value)
                         return
 
-                # Tile not loaded at level 0 — emit coords without value
+                # Level-0 tile not cached — read single pixel from reader
+                if self._reader is not None:
+                    try:
+                        chip = self._reader.read_chip(row, row + 1, col, col + 1)
+                        if chip.ndim == 2:
+                            value = chip[0, 0]
+                        else:
+                            value = chip[:, 0, 0]
+                        self.pixel_hovered.emit(row, col, value)
+                        return
+                    except Exception:
+                        pass
+
                 self.pixel_hovered.emit(row, col, None)
 
         def scrollContentsBy(self, dx: int, dy: int) -> None:
@@ -333,6 +352,9 @@ if _QT_AVAILABLE:
 
         def fit_in_view(self) -> None:
             """Zoom to fit the entire image in the viewport."""
+            if not self._has_valid_size:
+                self._fit_pending = True
+                return
             if self._tiled_mode and self._tile_cache is not None:
                 self.fitInView(self._scene.sceneRect(),
                                Qt.AspectRatioMode.KeepAspectRatio)

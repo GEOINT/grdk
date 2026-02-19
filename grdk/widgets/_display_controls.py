@@ -157,7 +157,8 @@ def build_display_controls(
     # --- SAR Remap ---
     if 'remap' in visible and _REMAP_FUNCTIONS:
         row = QHBoxLayout()
-        row.addWidget(QLabel("Remap:", group))
+        remap_label = QLabel("Remap:", group)
+        row.addWidget(remap_label)
 
         remap_combo = QComboBox(group)
         remap_combo.addItem("None (Standard)", "")
@@ -166,8 +167,13 @@ def build_display_controls(
         remap_combo.currentIndexChanged.connect(lambda _: _update())
         row.addWidget(remap_combo)
 
+        # Disabled by default — enabled when a SAR image is loaded
+        remap_label.setEnabled(False)
+        remap_combo.setEnabled(False)
+
         layout.addLayout(row)
         controls['remap'] = remap_combo
+        controls['remap_label'] = remap_label
 
     # --- Window/Level ---
     if 'window' in visible:
@@ -320,5 +326,20 @@ def build_display_controls(
         combo.blockSignals(False)
 
     group.update_band_info = _update_band_combo  # type: ignore[attr-defined]
+
+    def _set_remap_enabled(enabled: bool) -> None:
+        combo = controls.get('remap')
+        if combo is None:
+            return
+        combo.setEnabled(enabled)
+        label = controls.get('remap_label')
+        if label is not None:
+            label.setEnabled(enabled)
+        if not enabled:
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)  # Reset to "None (Standard)"
+            combo.blockSignals(False)
+
+    group.set_remap_enabled = _set_remap_enabled  # type: ignore[attr-defined]
 
     return group

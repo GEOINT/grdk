@@ -114,12 +114,12 @@ if _QT_AVAILABLE:
             self._viewer = GeoImageViewer(self)
             self.setCentralWidget(self._viewer)
 
-            # Build UI (docks before menus so toggleViewAction is available)
+            # Build UI (docks + toolbar before menus so toggleViewAction is available)
             self._create_actions()
             self._create_display_dock()
             self._create_metadata_dock()
-            self._create_menus()
             self._create_toolbar()
+            self._create_menus()
 
             # Wire band info updates to display controls
             self._viewer.band_info_changed.connect(self._on_band_info_changed)
@@ -141,11 +141,80 @@ if _QT_AVAILABLE:
                 self._viewer.open_file(filepath)
                 self.setWindowTitle(f"GRDK Viewer — {filepath}")
                 self._update_metadata_table()
+                self._update_remap_state()
                 self.statusBar().showMessage(f"Opened: {filepath}")
             except Exception as e:
                 QMessageBox.critical(
                     self, "Open Error",
                     f"Could not open file:\n{filepath}\n\n{e}",
+                )
+
+        def open_reader(
+            self,
+            reader: Any,
+            geolocation: Optional[Any] = None,
+        ) -> None:
+            """Open an image from a grdl ImageReader.
+
+            Parameters
+            ----------
+            reader : ImageReader
+                grdl reader instance.
+            geolocation : Geolocation, optional
+                Geolocation model.  If ``None``, the viewer operates
+                in pixel-only mode.
+            """
+            try:
+                self._viewer.open_reader(reader, geolocation=geolocation)
+                title = getattr(reader, 'filepath', None)
+                if title is not None:
+                    self.setWindowTitle(f"GRDK Viewer \u2014 {title}")
+                else:
+                    self.setWindowTitle("GRDK Viewer \u2014 [reader]")
+                self._update_metadata_table()
+                self._update_remap_state()
+                self.statusBar().showMessage("Opened reader")
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "Open Error",
+                    f"Could not open reader:\n{e}",
+                )
+
+        def set_array(
+            self,
+            arr: Any,
+            geolocation: Optional[Any] = None,
+            title: Optional[str] = None,
+        ) -> None:
+            """Display a pre-loaded numpy array.
+
+            Parameters
+            ----------
+            arr : np.ndarray
+                Image data (2D, 3D channels-first, or complex).
+            geolocation : Geolocation, optional
+                Geolocation model for coordinate display.
+            title : str, optional
+                Window title override.  If ``None``, shows array
+                shape and dtype.
+            """
+            try:
+                self._viewer.set_array(arr, geolocation=geolocation)
+                if title:
+                    self.setWindowTitle(f"GRDK Viewer \u2014 {title}")
+                else:
+                    self.setWindowTitle(
+                        f"GRDK Viewer \u2014 ndarray {arr.shape} {arr.dtype}"
+                    )
+                self._update_metadata_table()
+                self._update_remap_state()
+                self.statusBar().showMessage(
+                    f"Displaying array: {arr.shape} {arr.dtype}"
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "Display Error",
+                    f"Could not display array:\n{e}",
                 )
 
         # --- Actions ---
@@ -219,26 +288,29 @@ if _QT_AVAILABLE:
             view_menu.addSeparator()
             view_menu.addAction(self._clear_vectors_action)
             view_menu.addSeparator()
+            view_menu.addAction(self._toolbar.toggleViewAction())
             view_menu.addAction(self._display_dock.toggleViewAction())
             view_menu.addAction(self._metadata_dock.toggleViewAction())
 
         # --- Toolbar ---
 
         def _create_toolbar(self) -> None:
-            """Build the main toolbar."""
-            toolbar = QToolBar("Main", self)
-            toolbar.setMovable(False)
-            self.addToolBar(toolbar)
+            """Build the main toolbar (hidden by default)."""
+            self._toolbar = QToolBar("Main", self)
+            self._toolbar.setMovable(False)
+            self.addToolBar(self._toolbar)
 
-            toolbar.addAction(self._open_action)
-            toolbar.addAction(self._open_dir_action)
-            toolbar.addAction(self._load_vector_action)
-            toolbar.addSeparator()
-            toolbar.addAction(self._fit_action)
-            toolbar.addAction(self._zoom_in_action)
-            toolbar.addAction(self._zoom_out_action)
-            toolbar.addSeparator()
-            toolbar.addAction(self._export_action)
+            self._toolbar.addAction(self._open_action)
+            self._toolbar.addAction(self._open_dir_action)
+            self._toolbar.addAction(self._load_vector_action)
+            self._toolbar.addSeparator()
+            self._toolbar.addAction(self._fit_action)
+            self._toolbar.addAction(self._zoom_in_action)
+            self._toolbar.addAction(self._zoom_out_action)
+            self._toolbar.addSeparator()
+            self._toolbar.addAction(self._export_action)
+
+            self._toolbar.hide()
 
         # --- Dock widgets ---
 
@@ -339,6 +411,51 @@ if _QT_AVAILABLE:
             controls = self._display_dock.widget()
             if hasattr(controls, 'update_band_info'):
                 controls.update_band_info(band_info)
+
+        def _update_remap_state(self) -> None:
+            """Enable remap controls only for SAR imagery."""
+            controls = self._display_dock.widget()
+            if not hasattr(controls, 'set_remap_enabled'):
+                return
+            reader = self._viewer._reader
+            if reader is None:
+                controls.set_remap_enabled(False)
+                return
+            is_sar = False
+            try:
+                from grdl.IO.sar.sicd import SICDReader
+                if isinstance(reader, SICDReader):
+                    is_sar = True
+            except ImportError:
+                pass
+            try:
+                from grdl.IO.sar.biomass import BIOMASSL1Reader
+                if isinstance(reader, BIOMASSL1Reader):
+                    is_sar = True
+            except ImportError:
+                pass
+            try:
+                from grdl.IO.sar.sentinel1_slc import Sentinel1SLCReader
+                if isinstance(reader, Sentinel1SLCReader):
+                    is_sar = True
+            except ImportError:
+                pass
+            try:
+                from grdl.IO.sar.sidd import SIDDReader
+                if isinstance(reader, SIDDReader):
+                    is_sar = True
+            except ImportError:
+                pass
+            # Also check for complex data as a general SAR indicator
+            if not is_sar and reader is not None:
+                try:
+                    import numpy as np
+                    dtype = reader.get_dtype()
+                    if np.issubdtype(dtype, np.complexfloating):
+                        is_sar = True
+                except Exception:
+                    pass
+            controls.set_remap_enabled(is_sar)
 
         def _on_load_vector(self) -> None:
             """Handle File > Load GeoJSON."""

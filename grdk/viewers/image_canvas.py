@@ -382,6 +382,7 @@ if _QT_AVAILABLE:
             self._source: Optional[np.ndarray] = None
             self._settings = DisplaySettings()
             self._zoom_level = 1.0
+            self._zoom_history: list = []  # Stack of QTransform for undo
 
             # Scene setup
             self._scene = QGraphicsScene(self)
@@ -484,6 +485,23 @@ if _QT_AVAILABLE:
             self.fit_in_view()
             self.display_settings_changed.emit(self._settings)
 
+        # --- Zoom history ---
+
+        def _push_zoom_state(self) -> None:
+            """Save the current view transform for right-click undo."""
+            self._zoom_history.append(self.transform())
+
+        def zoom_undo(self) -> None:
+            """Revert to the previous zoom/pan state.
+
+            Does nothing if the history stack is empty.
+            """
+            if not self._zoom_history:
+                return
+            xform = self._zoom_history.pop()
+            self.setTransform(xform)
+            self._update_zoom_level()
+
         # --- Event overrides ---
 
         def mousePressEvent(self, event: Any) -> None:
@@ -496,6 +514,10 @@ if _QT_AVAILABLE:
                     QRect(self._zoom_box_origin, QSize()),
                 )
                 self._zoom_rubber_band.show()
+                event.accept()
+                return
+            if event.button() == Qt.MouseButton.RightButton:
+                self.zoom_undo()
                 event.accept()
                 return
             super().mousePressEvent(event)
@@ -511,6 +533,7 @@ if _QT_AVAILABLE:
                 ).normalized()
                 # Ignore tiny accidental drags
                 if rect.width() > 5 and rect.height() > 5:
+                    self._push_zoom_state()
                     scene_rect = self.mapToScene(rect).boundingRect()
                     self.fitInView(
                         scene_rect,
@@ -531,11 +554,13 @@ if _QT_AVAILABLE:
             else:
                 return
 
+            self._push_zoom_state()
             self.scale(factor, factor)
             self._update_zoom_level()
 
         def mouseDoubleClickEvent(self, event: Any) -> None:
             """Fit to view on double-click."""
+            self._push_zoom_state()
             self.fit_in_view()
 
         def mouseMoveEvent(self, event: Any) -> None:

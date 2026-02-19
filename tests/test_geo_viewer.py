@@ -142,24 +142,38 @@ class TestCoordinateFormatting:
     """Test the value formatting logic from CoordinateBar."""
 
     def test_scalar_float(self):
-        # Just verify the formatting logic works
         val = 42.123456
         formatted = f"{val:.4g}"
         assert formatted == "42.12"
 
-    def test_complex_value(self):
-        val = 3 + 4j
-        mag = abs(val)
-        phase = np.angle(val, deg=True)
+    def test_complex64_scalar(self):
+        """np.complex64 must be detected as complex (not Python complex subclass)."""
+        val = np.complex64(3 + 4j)
+        assert isinstance(val, np.complexfloating)
+        assert not isinstance(val, np.ndarray)
+        mag = float(np.abs(val))
+        phase = float(np.angle(val, deg=True))
         assert abs(mag - 5.0) < 0.01
         assert abs(phase - 53.13) < 0.1
 
-    def test_rgb_tuple(self):
-        val = np.array([128, 64, 32])
-        formatted = f"({val[0]:.4g}, {val[1]:.4g}, {val[2]:.4g})"
+    def test_multiband_real(self):
+        val = np.array([128.0, 64.0, 32.0])
+        parts = [f"{float(v):.4g}" for v in val]
+        formatted = f"[{', '.join(parts)}]"
         assert "128" in formatted
         assert "64" in formatted
         assert "32" in formatted
+
+    def test_multiband_complex(self):
+        val = np.array([3 + 4j, 1 + 0j])
+        parts = []
+        for v in val:
+            mag = float(np.abs(v))
+            phase = float(np.angle(v, deg=True))
+            parts.append(f"{mag:.4g}\u2220{phase:.1f}\u00b0")
+        formatted = f"[{', '.join(parts)}]"
+        assert "5" in formatted
+        assert "53.1" in formatted
 
 
 # ---------------------------------------------------------------------------

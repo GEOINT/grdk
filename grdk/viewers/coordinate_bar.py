@@ -147,38 +147,45 @@ if _QT_AVAILABLE:
                 self._value_label.setText("Value: —")
                 return
 
+            # Numpy array (includes 0-d scalars from array indexing)
             if isinstance(value, np.ndarray):
                 if np.iscomplexobj(value):
-                    # Single complex value
                     if value.ndim == 0:
-                        mag = float(np.abs(value))
-                        phase = float(np.angle(value, deg=True))
                         self._value_label.setText(
-                            f"Value: {mag:.4g} \u2220{phase:.1f}\u00b0"
+                            f"Value: {self._fmt_complex(value)}"
                         )
                     else:
-                        # Multi-band complex
+                        parts = [self._fmt_complex(v) for v in value.flat]
                         self._value_label.setText(
-                            f"Value: {value}"
+                            f"Value: [{', '.join(parts)}]"
                         )
                 elif value.ndim == 0:
-                    self._value_label.setText(f"Value: {float(value):.4g}")
-                elif len(value) == 3:
                     self._value_label.setText(
-                        f"Value: ({value[0]:.4g}, {value[1]:.4g}, {value[2]:.4g})"
+                        f"Value: {float(value):.4g}"
                     )
                 else:
-                    self._value_label.setText(f"Value: {value}")
-            elif isinstance(value, complex):
-                mag = abs(value)
-                phase = np.angle(value, deg=True)
+                    parts = [f"{float(v):.4g}" for v in value.flat]
+                    self._value_label.setText(
+                        f"Value: [{', '.join(parts)}]"
+                    )
+            # Numpy complex scalars (np.complex64, np.complex128, etc.)
+            # np.complex64 does NOT inherit from Python complex, so
+            # check np.complexfloating before the builtin complex check.
+            elif isinstance(value, (np.complexfloating, complex)):
                 self._value_label.setText(
-                    f"Value: {mag:.4g} \u2220{phase:.1f}\u00b0"
+                    f"Value: {self._fmt_complex(value)}"
                 )
-            elif isinstance(value, (int, float)):
-                self._value_label.setText(f"Value: {value:.4g}")
+            elif isinstance(value, (int, float, np.integer, np.floating)):
+                self._value_label.setText(f"Value: {float(value):.4g}")
             else:
                 self._value_label.setText(f"Value: {value}")
+
+        @staticmethod
+        def _fmt_complex(val: Any) -> str:
+            """Format a single complex value as magnitude∠phase."""
+            mag = float(np.abs(val))
+            phase = float(np.angle(val, deg=True))
+            return f"{mag:.4g}\u2220{phase:.1f}\u00b0"
 
 else:
 
