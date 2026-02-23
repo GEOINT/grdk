@@ -35,8 +35,11 @@ Modified
 """
 
 # Standard library
+import logging
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Optional
+
+_log = logging.getLogger("grdk.image_canvas")
 
 # Third-party
 import numpy as np
@@ -208,6 +211,11 @@ def normalize_array(
     if settings is None:
         settings = DisplaySettings()
 
+    _log.debug(
+        "normalize_array: input shape=%s dtype=%s, settings.band_index=%s",
+        arr.shape, arr.dtype, settings.band_index,
+    )
+
     # 1. Complex → magnitude
     if np.iscomplexobj(arr):
         arr = np.abs(arr)
@@ -318,6 +326,11 @@ def array_to_qimage(
 
     display = normalize_array(arr, settings)
 
+    _log.debug(
+        "array_to_qimage: display shape=%s dtype=%s",
+        display.shape, display.dtype,
+    )
+
     # Channels-first (C, H, W) → channels-last (H, W, C) for QImage.
     # Distinguish from colormap output (H, W, 3) by checking dim sizes.
     if (display.ndim == 3
@@ -425,6 +438,10 @@ if _QT_AVAILABLE:
             arr : np.ndarray
                 Image data (2D, 3D, or complex).
             """
+            _log.info(
+                "ImageCanvas.set_array: shape=%s dtype=%s",
+                arr.shape, arr.dtype,
+            )
             self._source = arr
             self._refresh_display()
 
@@ -436,6 +453,10 @@ if _QT_AVAILABLE:
             settings : DisplaySettings
                 New display parameters.
             """
+            _log.debug(
+                "set_display_settings: cmap=%s, band=%s, contrast=%.1f",
+                settings.colormap, settings.band_index, settings.contrast,
+            )
             self._settings = settings
             self._refresh_display()
             self.display_settings_changed.emit(settings)
@@ -601,7 +622,12 @@ if _QT_AVAILABLE:
                 return
 
             qimg = array_to_qimage(self._source, self._settings)
-            self._pixmap_item.setPixmap(QPixmap.fromImage(qimg))
+            pixmap = QPixmap.fromImage(qimg)
+            _log.debug(
+                "_refresh_display: pixmap %dx%d (null=%s)",
+                pixmap.width(), pixmap.height(), pixmap.isNull(),
+            )
+            self._pixmap_item.setPixmap(pixmap)
             self._scene.setSceneRect(self._pixmap_item.boundingRect())
 
         def _update_zoom_level(self) -> None:

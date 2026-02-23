@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -60,7 +61,7 @@ from grdk.viewers.image_canvas import (
 
 ALL_CONTROLS = (
     'remap', 'window', 'percentile', 'contrast', 'brightness',
-    'gamma', 'colormap', 'band',
+    'gamma', 'colormap', 'colorbar', 'band',
 )
 
 # Discover available SAR remap functions
@@ -102,7 +103,7 @@ def build_display_controls(
     """
     visible = set(show) if show is not None else set(ALL_CONTROLS)
 
-    group = QGroupBox("Display", parent)
+    group = QGroupBox(parent)
     layout = QVBoxLayout(group)
 
     controls: Dict[str, Any] = {}
@@ -247,11 +248,23 @@ def build_display_controls(
         contrast_slider = QSlider(Qt.Orientation.Horizontal, group)
         contrast_slider.setRange(0, 300)
         contrast_slider.setValue(100)
-        contrast_slider.valueChanged.connect(lambda _: _update())
         row.addWidget(contrast_slider)
+
+        contrast_spin = QSpinBox(group)
+        contrast_spin.setRange(0, 300)
+        contrast_spin.setValue(100)
+        contrast_spin.setFixedWidth(55)
+        row.addWidget(contrast_spin)
+
+        # Bidirectional link: slider ↔ spinbox
+        contrast_slider.valueChanged.connect(contrast_spin.setValue)
+        contrast_spin.valueChanged.connect(contrast_slider.setValue)
+        # _update triggers via slider.valueChanged
+        contrast_slider.valueChanged.connect(lambda _: _update())
 
         layout.addLayout(row)
         controls['contrast'] = contrast_slider
+        controls['contrast_spin'] = contrast_spin
 
     # --- Brightness ---
     if 'brightness' in visible:
@@ -261,11 +274,23 @@ def build_display_controls(
         brightness_slider = QSlider(Qt.Orientation.Horizontal, group)
         brightness_slider.setRange(-100, 100)
         brightness_slider.setValue(0)
-        brightness_slider.valueChanged.connect(lambda _: _update())
         row.addWidget(brightness_slider)
+
+        brightness_spin = QSpinBox(group)
+        brightness_spin.setRange(-100, 100)
+        brightness_spin.setValue(0)
+        brightness_spin.setFixedWidth(55)
+        row.addWidget(brightness_spin)
+
+        # Bidirectional link: slider ↔ spinbox
+        brightness_slider.valueChanged.connect(brightness_spin.setValue)
+        brightness_spin.valueChanged.connect(brightness_slider.setValue)
+        # _update triggers via slider.valueChanged
+        brightness_slider.valueChanged.connect(lambda _: _update())
 
         layout.addLayout(row)
         controls['brightness'] = brightness_slider
+        controls['brightness_spin'] = brightness_spin
 
     # --- Gamma ---
     if 'gamma' in visible:
@@ -296,6 +321,13 @@ def build_display_controls(
         layout.addLayout(row)
         controls['colormap'] = cmap_combo
 
+    # --- Colorbar toggle ---
+    if 'colorbar' in visible:
+        colorbar_cb = QCheckBox("Show Colorbar", group)
+        colorbar_cb.setChecked(False)
+        layout.addWidget(colorbar_cb)
+        controls['colorbar'] = colorbar_cb
+
     # --- Band selector ---
     if 'band' in visible:
         row = QHBoxLayout()
@@ -315,6 +347,8 @@ def build_display_controls(
         combo = controls.get('band')
         if combo is None:
             return
+        # Preserve the canvas's current band_index so the combo reflects it
+        current_band = canvas.display_settings.band_index
         combo.blockSignals(True)
         combo.clear()
         combo.addItem("Auto", -1)
@@ -323,9 +357,46 @@ def build_display_controls(
             if info.description:
                 label = f"{info.name} \u2014 {info.description}"
             combo.addItem(label, info.index)
+        # Select the item matching the canvas's current band_index
+        if current_band is not None:
+            for idx in range(combo.count()):
+                if combo.itemData(idx) == current_band:
+                    combo.setCurrentIndex(idx)
+                    break
         combo.blockSignals(False)
 
     group.update_band_info = _update_band_combo  # type: ignore[attr-defined]
+
+    def _set_band_index(band_index: Optional[int]) -> None:
+        """Programmatically select a band in the combo and update canvas."""
+        combo = controls.get('band')
+        if combo is None:
+            return
+        target = band_index if band_index is not None else -1
+        combo.blockSignals(True)
+        for idx in range(combo.count()):
+            if combo.itemData(idx) == target:
+                combo.setCurrentIndex(idx)
+                break
+        combo.blockSignals(False)
+        _update()
+
+    group.set_band_index = _set_band_index  # type: ignore[attr-defined]
+
+    def _set_colormap(name: str) -> None:
+        """Programmatically select a colormap in the combo and update canvas."""
+        combo = controls.get('colormap')
+        if combo is None:
+            return
+        combo.blockSignals(True)
+        for idx in range(combo.count()):
+            if combo.itemData(idx) == name:
+                combo.setCurrentIndex(idx)
+                break
+        combo.blockSignals(False)
+        _update()
+
+    group.set_colormap = _set_colormap  # type: ignore[attr-defined]
 
     def _set_remap_enabled(enabled: bool) -> None:
         combo = controls.get('remap')
@@ -341,5 +412,97 @@ def build_display_controls(
             combo.blockSignals(False)
 
     group.set_remap_enabled = _set_remap_enabled  # type: ignore[attr-defined]
+
+    def _set_colorbar_enabled(enabled: bool) -> None:
+        """Enable or disable the colorbar checkbox (greyed out for RGB)."""
+        cb = controls.get('colorbar')
+        if cb is None:
+            return
+        cb.setEnabled(enabled)
+        if not enabled:
+            cb.blockSignals(True)
+            cb.setChecked(False)
+            cb.blockSignals(False)
+
+    group.set_colorbar_enabled = _set_colorbar_enabled  # type: ignore[attr-defined]
+
+    # Expose the colorbar checkbox for external signal wiring
+    group.colorbar_checkbox = controls.get('colorbar')  # type: ignore[attr-defined]
+
+    def _sync_from_settings() -> None:
+        """Sync all control widgets to match the canvas's current settings.
+
+        Call after programmatic changes to the canvas (e.g. auto-settings
+        applied during file load) so the UI reflects the actual state.
+        Blocks all signals during the sync to prevent feedback loops.
+        """
+        s = canvas.display_settings
+
+        if 'window' in controls:
+            auto = s.window_min is None and s.window_max is None
+            controls['window_auto'].blockSignals(True)
+            controls['window_auto'].setChecked(auto)
+            controls['window_auto'].blockSignals(False)
+            controls['window_min'].setEnabled(not auto)
+            controls['window_max'].setEnabled(not auto)
+            if not auto:
+                controls['window_min'].blockSignals(True)
+                controls['window_min'].setValue(s.window_min or 0.0)
+                controls['window_min'].blockSignals(False)
+                controls['window_max'].blockSignals(True)
+                controls['window_max'].setValue(s.window_max or 255.0)
+                controls['window_max'].blockSignals(False)
+
+        if 'percentile' in controls:
+            controls['percentile_low'].blockSignals(True)
+            controls['percentile_low'].setValue(s.percentile_low)
+            controls['percentile_low'].blockSignals(False)
+            controls['percentile_high'].blockSignals(True)
+            controls['percentile_high'].setValue(s.percentile_high)
+            controls['percentile_high'].blockSignals(False)
+
+        if 'contrast' in controls:
+            controls['contrast'].blockSignals(True)
+            controls['contrast'].setValue(int(s.contrast * 100))
+            controls['contrast'].blockSignals(False)
+            if 'contrast_spin' in controls:
+                controls['contrast_spin'].blockSignals(True)
+                controls['contrast_spin'].setValue(int(s.contrast * 100))
+                controls['contrast_spin'].blockSignals(False)
+
+        if 'brightness' in controls:
+            controls['brightness'].blockSignals(True)
+            controls['brightness'].setValue(int(s.brightness * 100))
+            controls['brightness'].blockSignals(False)
+            if 'brightness_spin' in controls:
+                controls['brightness_spin'].blockSignals(True)
+                controls['brightness_spin'].setValue(int(s.brightness * 100))
+                controls['brightness_spin'].blockSignals(False)
+
+        if 'gamma' in controls:
+            controls['gamma'].blockSignals(True)
+            controls['gamma'].setValue(s.gamma)
+            controls['gamma'].blockSignals(False)
+
+        if 'colormap' in controls:
+            combo = controls['colormap']
+            combo.blockSignals(True)
+            for idx in range(combo.count()):
+                if combo.itemData(idx) == s.colormap:
+                    combo.setCurrentIndex(idx)
+                    break
+            combo.blockSignals(False)
+
+        if 'band' in controls:
+            combo = controls['band']
+            target = s.band_index if s.band_index is not None else -1
+            combo.blockSignals(True)
+            for idx in range(combo.count()):
+                if combo.itemData(idx) == target:
+                    combo.setCurrentIndex(idx)
+                    break
+            combo.blockSignals(False)
+
+    group.sync_from_settings = _sync_from_settings  # type: ignore[attr-defined]
 
     return group

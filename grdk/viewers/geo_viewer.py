@@ -32,9 +32,12 @@ Modified
 
 # Standard library
 import contextlib
+import logging
 import os
 from pathlib import Path
 from typing import Any, Optional, Union
+
+_log = logging.getLogger("grdk.geo_viewer")
 
 # Third-party
 import numpy as np
@@ -52,6 +55,7 @@ from grdk.viewers.image_canvas import DisplaySettings
 from grdk.viewers.tiled_canvas import TiledImageCanvas
 from grdk.viewers.coordinate_bar import CoordinateBar
 from grdk.viewers.vector_overlay import VectorOverlayLayer
+from grdk.widgets.colorbar import ColorBarWidget
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +183,7 @@ def open_any(filepath: Union[str, Path]) -> Any:
     """
     path = Path(filepath)
     errors = []
+    _log.info("open_any: trying %s", filepath)
 
     # Suppress C-level GDAL warnings (e.g. "TXTFMT: Invalid field value")
     # that are emitted to stderr when reading NITF/SICD files.
@@ -208,38 +213,57 @@ def open_any(filepath: Union[str, Path]) -> Any:
         # 1. SAR first — NITF files may be SICD (complex SAR), not generic NITF
         try:
             from grdl.IO import open_sar
-            return open_sar(path)
+            reader = open_sar(path)
+            _log.info("open_any: opened via open_sar → %s", type(reader).__name__)
+            return reader
         except (ValueError, ImportError, Exception) as e:
+            _log.debug("open_any: open_sar failed: %s", e)
             errors.append(f"SAR: {e}")
 
         # 2. Generic formats (GeoTIFF, NITF, HDF5, JP2)
         try:
             from grdl.IO import open_image
-            return open_image(path)
+            reader = open_image(path)
+            _log.info("open_any: opened via open_image → %s", type(reader).__name__)
+            return reader
         except (ValueError, ImportError, Exception) as e:
+            _log.debug("open_any: open_image failed: %s", e)
             errors.append(f"Image: {e}")
 
         # 3. EO-specific (Sentinel-2, etc.)
         try:
             from grdl.IO import open_eo
-            return open_eo(path)
+            reader = open_eo(path)
+            _log.info("open_any: opened via open_eo → %s", type(reader).__name__)
+            return reader
         except (ValueError, ImportError, Exception) as e:
+            _log.debug("open_any: open_eo failed: %s", e)
             errors.append(f"EO: {e}")
 
         # 4. IR
         try:
             from grdl.IO import open_ir
-            return open_ir(path)
+            reader = open_ir(path)
+            _log.info("open_any: opened via open_ir → %s", type(reader).__name__)
+            return reader
         except (ValueError, ImportError, Exception) as e:
+            _log.debug("open_any: open_ir failed: %s", e)
             errors.append(f"IR: {e}")
 
         # 5. Multispectral
         try:
             from grdl.IO import open_multispectral
-            return open_multispectral(path)
+            reader = open_multispectral(path)
+            _log.info(
+                "open_any: opened via open_multispectral → %s",
+                type(reader).__name__,
+            )
+            return reader
         except (ValueError, ImportError, Exception) as e:
+            _log.debug("open_any: open_multispectral failed: %s", e)
             errors.append(f"MSI: {e}")
 
+    _log.error("open_any: all openers failed for %s", filepath)
     raise ValueError(
         f"Could not open {filepath}. Tried all grdl openers:\n"
         + "\n".join(f"  - {e}" for e in errors)
@@ -263,12 +287,16 @@ def create_geolocation(reader: Any) -> Optional[Any]:
     Optional[Geolocation]
         Geolocation instance, or None.
     """
+    _log.debug("create_geolocation: reader type = %s", type(reader).__name__)
+
     # Lazy imports to avoid pulling in optional dependencies at module level
     try:
         from grdl.IO.sar.sicd import SICDReader
         if isinstance(reader, SICDReader):
             from grdl.geolocation import SICDGeolocation
-            return SICDGeolocation.from_reader(reader)
+            geo = SICDGeolocation.from_reader(reader)
+            _log.info("create_geolocation: SICDGeolocation created")
+            return geo
     except ImportError:
         pass
 
@@ -276,7 +304,9 @@ def create_geolocation(reader: Any) -> Optional[Any]:
         from grdl.IO.sar.sentinel1_slc import Sentinel1SLCReader
         if isinstance(reader, Sentinel1SLCReader):
             from grdl.geolocation import Sentinel1SLCGeolocation
-            return Sentinel1SLCGeolocation.from_reader(reader)
+            geo = Sentinel1SLCGeolocation.from_reader(reader)
+            _log.info("create_geolocation: Sentinel1SLCGeolocation created")
+            return geo
     except ImportError:
         pass
 
@@ -286,10 +316,12 @@ def create_geolocation(reader: Any) -> Optional[Any]:
             gcps = reader.metadata.get('gcps')
             if gcps:
                 from grdl.geolocation import GCPGeolocation
-                return GCPGeolocation.from_dict(
+                geo = GCPGeolocation.from_dict(
                     {'gcps': gcps, 'crs': reader.metadata.get('crs', 'WGS84')},
                     reader.metadata,
                 )
+                _log.info("create_geolocation: GCPGeolocation created (BIOMASS)")
+                return geo
     except ImportError:
         pass
 
@@ -300,7 +332,9 @@ def create_geolocation(reader: Any) -> Optional[Any]:
             crs = reader.metadata.get('crs')
             if transform and crs:
                 from grdl.geolocation import AffineGeolocation
-                return AffineGeolocation.from_reader(reader)
+                geo = AffineGeolocation.from_reader(reader)
+                _log.info("create_geolocation: AffineGeolocation created (GeoTIFF)")
+                return geo
     except ImportError:
         pass
 
@@ -311,10 +345,16 @@ def create_geolocation(reader: Any) -> Optional[Any]:
             crs = reader.metadata.get('crs')
             if transform and crs:
                 from grdl.geolocation import AffineGeolocation
-                return AffineGeolocation.from_reader(reader)
+                geo = AffineGeolocation.from_reader(reader)
+                _log.info("create_geolocation: AffineGeolocation created (NITF)")
+                return geo
     except ImportError:
         pass
 
+    _log.info(
+        "create_geolocation: no geolocation for %s (pixel-only mode)",
+        type(reader).__name__,
+    )
     return None
 
 
@@ -358,6 +398,12 @@ if _QT_AVAILABLE:
             self._canvas = TiledImageCanvas(self)
             self._coord_bar = CoordinateBar(self)
             self._coord_bar.connect_canvas(self._canvas)
+            self._colorbar = ColorBarWidget(self)
+
+            # Update colorbar when display settings change
+            self._canvas.display_settings_changed.connect(
+                self._colorbar.update_from_settings,
+            )
 
             # Vector overlay (operates on canvas scene)
             self._vector_overlay = VectorOverlayLayer(self._canvas._scene)
@@ -367,6 +413,7 @@ if _QT_AVAILABLE:
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(0)
             layout.addWidget(self._canvas, 1)
+            layout.addWidget(self._colorbar, 0)
             layout.addWidget(self._coord_bar, 0)
 
         # --- Public properties ---
@@ -375,6 +422,11 @@ if _QT_AVAILABLE:
         def canvas(self) -> TiledImageCanvas:
             """The underlying image canvas."""
             return self._canvas
+
+        @property
+        def coord_bar(self) -> CoordinateBar:
+            """The coordinate bar widget."""
+            return self._coord_bar
 
         @property
         def display_settings(self) -> DisplaySettings:
@@ -401,6 +453,11 @@ if _QT_AVAILABLE:
             return self._band_info
 
         @property
+        def colorbar(self) -> ColorBarWidget:
+            """The colorbar widget."""
+            return self._colorbar
+
+        @property
         def vector_overlay(self) -> VectorOverlayLayer:
             """The vector overlay layer."""
             return self._vector_overlay
@@ -423,6 +480,7 @@ if _QT_AVAILABLE:
             ValueError
                 If the file cannot be opened.
             """
+            _log.info("GeoImageViewer.open_file: %s", filepath)
             QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
             try:
                 reader = open_any(filepath)
@@ -460,6 +518,14 @@ if _QT_AVAILABLE:
                 self._geolocation = geolocation
                 self._metadata = getattr(reader, 'metadata', None)
 
+                shape = reader.get_shape()
+                dtype = getattr(reader, 'get_dtype', lambda: 'unknown')()
+                _log.info(
+                    "open_reader: %s, shape=%s, dtype=%s, geo=%s",
+                    type(reader).__name__, shape, dtype,
+                    type(geolocation).__name__ if geolocation else "None",
+                )
+
                 # Auto-detect SICD and apply 2-98% contrast stretch
                 self._apply_auto_settings(reader)
 
@@ -471,6 +537,10 @@ if _QT_AVAILABLE:
 
                 # Extract and emit band info
                 self._band_info = get_band_info(reader)
+                _log.debug(
+                    "open_reader: band_info = %s",
+                    [(b.index, b.name) for b in self._band_info],
+                )
                 self.band_info_changed.emit(self._band_info)
 
                 # Load into canvas
@@ -528,22 +598,127 @@ if _QT_AVAILABLE:
         def _apply_auto_settings(self, reader: Any) -> None:
             """Apply sensible default display settings based on reader type.
 
-            For SICD (complex SAR) data, applies a 2-98% percentile
-            contrast stretch which is the standard default for SAR imagery.
+            For SAR/complex data:
+            - Applies a 2-98% percentile contrast stretch (standard for SAR).
+            - For multi-band data, selects band 0 to ensure single-band
+              display.  Without this, multi-band SAR data is incorrectly
+              displayed as false-color RGB, which disables remap functions
+              and colormap application.
             """
+            from dataclasses import replace
+
+            is_sar = False
             try:
                 from grdl.IO.sar.sicd import SICDReader
                 if isinstance(reader, SICDReader):
-                    from dataclasses import replace
-                    settings = replace(
-                        self._canvas.display_settings,
-                        percentile_low=2.0,
-                        percentile_high=98.0,
-                    )
-                    self._canvas.set_display_settings(settings)
-                    return
+                    is_sar = True
             except ImportError:
                 pass
+            if not is_sar:
+                try:
+                    from grdl.IO.sar.biomass import BIOMASSL1Reader
+                    if isinstance(reader, BIOMASSL1Reader):
+                        is_sar = True
+                except ImportError:
+                    pass
+            if not is_sar:
+                try:
+                    from grdl.IO.sar.sentinel1_slc import Sentinel1SLCReader
+                    if isinstance(reader, Sentinel1SLCReader):
+                        is_sar = True
+                except ImportError:
+                    pass
+            if not is_sar:
+                try:
+                    from grdl.IO.sar.sidd import SIDDReader
+                    if isinstance(reader, SIDDReader):
+                        is_sar = True
+                except ImportError:
+                    pass
+            if not is_sar:
+                try:
+                    dtype = reader.get_dtype()
+                    if np.issubdtype(dtype, np.complexfloating):
+                        is_sar = True
+                except Exception:
+                    pass
+
+            if not is_sar:
+                _log.debug("_apply_auto_settings: not SAR, skipping")
+                return
+
+            _log.info("_apply_auto_settings: SAR detected (%s)", type(reader).__name__)
+            settings = self._canvas.display_settings
+
+            # 2-98% contrast stretch for SAR
+            settings = replace(
+                settings,
+                percentile_low=2.0,
+                percentile_high=98.0,
+            )
+
+            # Multi-band SAR: select band 0 to avoid false-color RGB
+            # display.  SAR polarization bands (HH, HV, etc.) are not
+            # RGB channels — displaying them as RGB disables remap and
+            # colormap, and produces misleading colors.
+            try:
+                shape = reader.get_shape()
+                if len(shape) >= 3 and shape[2] > 1:
+                    # get_shape returns (rows, cols, bands)
+                    settings = replace(settings, band_index=0)
+                    _log.info(
+                        "_apply_auto_settings: multi-band SAR, selected band 0"
+                    )
+                elif len(shape) == 2:
+                    pass  # Single band, no override needed
+            except Exception:
+                pass
+
+            # Multi-pol SAR (Sentinel-1, TerraSAR-X): each reader
+            # only loads one polarization, but band_info lists all
+            # available pols.  Set band_index to the loaded pol's
+            # position so the combo shows the correct selection.
+            try:
+                all_pols = reader.get_available_polarizations()
+                if len(all_pols) > 1:
+                    current_pol = None
+                    # TerraSAR-X
+                    current_pol = getattr(
+                        reader, '_requested_polarization', None,
+                    )
+                    if current_pol is None:
+                        # Sentinel-1
+                        meta = getattr(reader, 'metadata', None)
+                        if meta is not None:
+                            si = (
+                                meta.get('swath_info')
+                                if hasattr(meta, 'get')
+                                else getattr(meta, 'swath_info', None)
+                            )
+                            if si:
+                                current_pol = getattr(
+                                    si, 'polarization', None,
+                                )
+                    if current_pol and current_pol in all_pols:
+                        pol_index = all_pols.index(current_pol)
+                        settings = replace(settings, band_index=pol_index)
+                        _log.info(
+                            "_apply_auto_settings: multi-pol SAR, "
+                            "selected %s at index %d",
+                            current_pol, pol_index,
+                        )
+            except (AttributeError, Exception):
+                pass
+
+            _log.debug("_apply_auto_settings: settings = %s", settings)
+
+            # Assign directly to avoid triggering a re-render on the
+            # stale tile cache.  The old reader has already been closed
+            # (in open_reader above) but canvas.set_reader() hasn't been
+            # called yet, so set_display_settings() would try to refresh
+            # tiles using the closed reader — causing partial loads or
+            # blank displays.
+            self._canvas._settings = settings  # type: ignore[attr-defined]
 
         # --- Vector overlays ---
 
@@ -570,10 +745,36 @@ if _QT_AVAILABLE:
             ----------
             filepath : str
                 Output path.  Format determined by extension
-                (e.g., .png, .jpg).
+                (e.g., .png, .jpg, .bmp).
+
+            Raises
+            ------
+            RuntimeError
+                If the save operation fails.
             """
+            import os
+
             pixmap = self._canvas.grab()
-            pixmap.save(filepath)
+
+            # Determine format from extension for reliable saving
+            ext = os.path.splitext(filepath)[1].lower()
+            fmt_map = {
+                '.png': 'PNG',
+                '.jpg': 'JPEG',
+                '.jpeg': 'JPEG',
+                '.bmp': 'BMP',
+            }
+            fmt = fmt_map.get(ext)
+
+            if fmt:
+                ok = pixmap.save(filepath, fmt)
+            else:
+                ok = pixmap.save(filepath)
+
+            if not ok:
+                raise RuntimeError(
+                    f"Failed to save image (format={fmt or 'auto'})."
+                )
 
 else:
 
