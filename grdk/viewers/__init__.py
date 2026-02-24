@@ -16,6 +16,7 @@ Components
 - ``coordinate_bar`` — Pixel + lat/lon status bar
 - ``vector_overlay`` — GeoJSON vector rendering over images
 - ``geo_viewer`` — Single-pane geospatial viewer (composite widget)
+- ``dual_viewer`` — Dual-pane viewer with sync controller and sync bar
 - ``main_window`` — Standalone viewer application window
 - ``stack_viewer`` — napari-based multi-image stack viewer
 - ``chip_gallery`` — Scrollable chip thumbnail grid with labels
@@ -54,6 +55,7 @@ from grdk.viewers.tiled_canvas import TiledImageCanvas
 from grdk.viewers.coordinate_bar import CoordinateBar
 from grdk.viewers.vector_overlay import VectorOverlayLayer
 from grdk.viewers.geo_viewer import GeoImageViewer, open_any, create_geolocation
+from grdk.viewers.dual_viewer import DualGeoViewer, SyncController
 from grdk.viewers.main_window import ViewerMainWindow
 
 

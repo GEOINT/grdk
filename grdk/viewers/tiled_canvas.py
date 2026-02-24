@@ -31,6 +31,7 @@ Modified
 """
 
 # Standard library
+import logging
 import math
 from typing import Any, Dict, Optional, Tuple
 
@@ -48,6 +49,8 @@ except ImportError:
 
 from grdk.viewers.image_canvas import DisplaySettings, ImageCanvas
 from grdk.viewers.tile_cache import TileCache, TileKey, needs_tiling
+
+_log = logging.getLogger("grdk.tiled_canvas")
 
 
 if _QT_AVAILABLE:
@@ -138,6 +141,7 @@ if _QT_AVAILABLE:
                 return
 
             # Large image — tiled mode
+            _log.info("set_reader: tiled mode %dx%d (%d pixels)", cols, rows, rows * cols)
             self._tiled_mode = True
             self._source = None  # No in-memory source array
             self._pixmap_item.setVisible(False)
@@ -200,6 +204,7 @@ if _QT_AVAILABLE:
             settings : DisplaySettings
                 New display parameters.
             """
+            _log.debug("set_display_settings: tiled=%s", self._tiled_mode)
             if self._tiled_mode and self._tile_cache is not None:
                 self._settings = settings
                 self._tile_cache.set_display_settings(settings)
@@ -288,41 +293,15 @@ if _QT_AVAILABLE:
 
             rows, cols = self._tile_cache.image_shape
             if 0 <= row < rows and 0 <= col < cols:
-                # Try to get value from the level-0 tile cache
-                ts = self._tile_cache.tile_size
-                tile_row = row // ts
-                tile_col = col // ts
-                key = TileKey(0, tile_row, tile_col)
-                raw = self._tile_cache.get_raw(key)
-                if raw is not None:
-                    local_r = row - tile_row * ts
-                    local_c = col - tile_col * ts
-                    if raw.ndim == 2:
-                        h, w = raw.shape
-                    else:
-                        h, w = raw.shape[1], raw.shape[2]
-                    if 0 <= local_r < h and 0 <= local_c < w:
-                        if raw.ndim == 2:
-                            value = raw[local_r, local_c]
-                        else:
-                            value = raw[:, local_r, local_c]
-                        self.pixel_hovered.emit(row, col, value)
-                        return
-
-                # Level-0 tile not cached — read single pixel from reader
-                if self._reader is not None:
-                    try:
-                        chip = self._reader.read_chip(row, row + 1, col, col + 1)
-                        if chip.ndim == 2:
-                            value = chip[0, 0]
-                        else:
-                            value = chip[:, 0, 0]
-                        self.pixel_hovered.emit(row, col, value)
-                        return
-                    except Exception:
-                        pass
-
-                self.pixel_hovered.emit(row, col, None)
+                # Try to get the pixel value from cached tile data.
+                # Check level 0 first (full resolution), then fall back
+                # to the current display level (approximate value).
+                # IMPORTANT: Do NOT read directly from self._reader here.
+                # The reader may be accessed concurrently by tile-loading
+                # worker threads, and GDAL/rasterio dataset handles are
+                # not thread-safe — concurrent reads cause segfaults.
+                value = self._read_pixel_from_cache(row, col)
+                self.pixel_hovered.emit(row, col, value)
 
         def scrollContentsBy(self, dx: int, dy: int) -> None:
             """Schedule tile update on pan."""
@@ -382,6 +361,11 @@ if _QT_AVAILABLE:
             """Fit to view on double-click."""
             self.fit_in_view()
 
+        def closeEvent(self, event: Any) -> None:
+            """Ensure cleanup on widget close."""
+            self._clear_tiles()
+            super().closeEvent(event)
+
         # --- Internal ---
 
         def _schedule_tile_update(self) -> None:
@@ -408,6 +392,57 @@ if _QT_AVAILABLE:
             # At zoom=0.25, 4 source pixels per viewport pixel → level 2
             level = max(0, int(math.log2(max(1.0, 1.0 / zoom))))
             return min(level, self._tile_cache.num_levels - 1)
+
+        def _read_pixel_from_cache(self, row: int, col: int) -> Any:
+            """Read a pixel value from cached tile data (no reader access).
+
+            Tries level 0 first for exact values, then falls back to
+            the current display level for approximate values.  Returns
+            None if no cached tile covers the pixel.
+            """
+            if self._tile_cache is None:
+                return None
+
+            ts = self._tile_cache.tile_size
+
+            # Try level 0 (full resolution — exact value)
+            key0 = TileKey(0, row // ts, col // ts)
+            raw = self._tile_cache.get_raw(key0)
+            if raw is not None:
+                local_r = row - key0.tile_row * ts
+                local_c = col - key0.tile_col * ts
+                if raw.ndim == 2:
+                    h, w = raw.shape
+                else:
+                    h, w = raw.shape[1], raw.shape[2]
+                if 0 <= local_r < h and 0 <= local_c < w:
+                    if raw.ndim == 2:
+                        return raw[local_r, local_c]
+                    return raw[:, local_r, local_c]
+
+            # Fall back to current display level (approximate value)
+            level = self._current_level
+            if level > 0:
+                factor = 1 << level
+                key_lod = TileKey(
+                    level,
+                    row // (ts * factor),
+                    col // (ts * factor),
+                )
+                raw = self._tile_cache.get_raw(key_lod)
+                if raw is not None:
+                    local_r = (row // factor) - key_lod.tile_row * ts
+                    local_c = (col // factor) - key_lod.tile_col * ts
+                    if raw.ndim == 2:
+                        h, w = raw.shape
+                    else:
+                        h, w = raw.shape[1], raw.shape[2]
+                    if 0 <= local_r < h and 0 <= local_c < w:
+                        if raw.ndim == 2:
+                            return raw[local_r, local_c]
+                        return raw[:, local_r, local_c]
+
+            return None
 
         def _update_visible_tiles(self) -> None:
             """Compute which tiles are visible and request them."""
@@ -440,6 +475,13 @@ if _QT_AVAILABLE:
             for tr in range(tile_row_start, tile_row_end):
                 for tc in range(tile_col_start, tile_col_end):
                     needed_keys.append(TileKey(level, tr, tc))
+
+            _log.info(
+                "update_visible: level=%d, viewport=(%d,%d)-(%d,%d), "
+                "tiles=%d needed, %d pending",
+                level, row_start, col_start, row_end, col_end,
+                len(needed_keys), len(self._tile_cache._pending),
+            )
 
             # Remove tiles from other levels
             stale_keys = [k for k in self._tile_items if k.level != level]
@@ -477,6 +519,10 @@ if _QT_AVAILABLE:
 
             # Only place tiles at the current display level
             if level != self._current_level:
+                _log.debug(
+                    "Skipping tile %s (level %d != current %d)",
+                    key, level, self._current_level,
+                )
                 return
 
             if key in self._tile_items:
@@ -488,10 +534,16 @@ if _QT_AVAILABLE:
                 pixmap = self._tile_cache.get_pixmap(key)
                 if pixmap is not None:
                     self._place_tile(key, pixmap)
+                    _log.info("Placed tile %s (%d total)", key, len(self._tile_items))
+                else:
+                    _log.warning("tile_ready but no pixmap for %s", key)
 
             # Hide busy cursor when all pending tiles are loaded
             if self._tile_cache is not None and not self._tile_cache.has_pending:
+                _log.info("All tiles loaded (%d items)", len(self._tile_items))
                 self._hide_busy_cursor()
+                # Force scene repaint to ensure all tiles are visible
+                self._scene.update()
 
         def _place_tile(self, key: TileKey, pixmap: QPixmap) -> None:
             """Add a tile pixmap item to the scene at the correct position."""
@@ -531,6 +583,7 @@ if _QT_AVAILABLE:
 
         def _clear_tiles(self) -> None:
             """Remove all tile items and reset tiled state."""
+            _log.debug("_clear_tiles: removing %d items", len(self._tile_items))
             self._hide_busy_cursor()
 
             for item in self._tile_items.values():

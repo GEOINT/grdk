@@ -31,7 +31,9 @@ Modified
 """
 
 # Standard library
+import logging
 import math
+import queue as _queue
 from collections import OrderedDict
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
@@ -39,7 +41,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 import numpy as np
 
 try:
-    from PyQt6.QtCore import QMutex, QObject, QRunnable, QThreadPool, pyqtSignal as Signal
+    from PyQt6.QtCore import QMutex, QObject, QRunnable, QThreadPool, Qt, pyqtSignal as Signal
     from PyQt6.QtGui import QPixmap
 
     _QT_AVAILABLE = True
@@ -169,17 +171,26 @@ if _QT_AVAILABLE:
 
                 self.callback(self.key, chip)
             except Exception:
-                # Tile load failure is non-fatal; tile stays missing
-                pass
+                # Signal failure so the tile is removed from _pending.
+                # Passing None as data tells _drain_queue to skip caching.
+                try:
+                    self.callback(self.key, None)
+                except Exception:
+                    pass
 
     # -------------------------------------------------------------------
     # Signal proxy (QRunnable cannot emit signals directly)
     # -------------------------------------------------------------------
 
     class _SignalProxy(QObject):
-        """Proxy to emit tile_ready from worker threads to the main thread."""
+        """Proxy to emit signals from worker threads to the main thread.
 
-        tile_ready = Signal(int, int, int)
+        Uses a lightweight notification signal (no data payload) to
+        tell the main thread that new tile data is available in the
+        thread-safe queue.
+        """
+
+        tile_notify = Signal()
 
     # -------------------------------------------------------------------
     # TileCache
@@ -228,6 +239,7 @@ if _QT_AVAILABLE:
         ) -> None:
             super().__init__(parent)
 
+            self._log = logging.getLogger('grdk.tile_cache')
             self._reader = reader
             self._tile_size = tile_size
             self._max_bytes = max_memory_mb * 1024 * 1024
@@ -238,6 +250,10 @@ if _QT_AVAILABLE:
             self._num_levels = compute_num_levels(self._rows, self._cols, tile_size)
 
             self._settings = DisplaySettings()
+
+            # Generation counter: incremented on clear() to invalidate
+            # in-flight workers from a previous session.
+            self._generation: int = 0
 
             # Global image statistics for consistent window/level across tiles
             self._global_min: Optional[float] = None
@@ -257,12 +273,36 @@ if _QT_AVAILABLE:
             # Thread safety for reader access
             self._mutex = QMutex()
 
-            # Signal proxy for cross-thread notification
-            self._proxy = _SignalProxy()
-            self._proxy.tile_ready.connect(self.tile_ready)
+            # Thread-safe queue for tile data from workers → main thread.
+            # Workers put (generation, TileKey, np.ndarray) tuples;
+            # the main thread drains the queue in _drain_queue().
+            self._tile_queue: _queue.Queue = _queue.Queue()
+
+            # Signal proxy — lightweight notification that new data
+            # is available in the queue.  Connected with QueuedConnection
+            # so the slot runs on the main thread.
+            self._proxy = _SignalProxy(self)
+            self._proxy.tile_notify.connect(
+                self._drain_queue, Qt.ConnectionType.QueuedConnection,
+            )
+
+            # Safety-net timer: drains the queue every 50 ms in case
+            # the signal notification is missed (some Qt backends
+            # can drop or batch queued signals).
+            from PyQt6.QtCore import QTimer
+            self._drain_timer = QTimer(self)
+            self._drain_timer.setInterval(50)
+            self._drain_timer.timeout.connect(self._drain_queue)
+            self._drain_timer.start()
 
             # Thread pool (shared Qt pool)
             self._pool = QThreadPool.globalInstance()
+
+            self._log.info(
+                "TileCache: %dx%d, %d levels, tile_size=%d, budget=%dMB",
+                self._cols, self._rows, self._num_levels,
+                tile_size, max_memory_mb,
+            )
 
         @property
         def num_levels(self) -> int:
@@ -331,6 +371,10 @@ if _QT_AVAILABLE:
         def get_pixmap(self, key: TileKey) -> Optional[QPixmap]:
             """Return the rendered QPixmap for a tile, or None if not loaded.
 
+            Performs lazy rendering: if the raw tile data is cached but
+            no QPixmap has been created yet, renders it now.  This
+            ensures QPixmap creation always happens on the GUI thread.
+
             Parameters
             ----------
             key : TileKey
@@ -340,7 +384,11 @@ if _QT_AVAILABLE:
             -------
             Optional[QPixmap]
             """
-            return self._pixmap_cache.get(key)
+            pixmap = self._pixmap_cache.get(key)
+            if pixmap is None and key in self._raw_cache:
+                self._render_pixmap(key)
+                pixmap = self._pixmap_cache.get(key)
+            return pixmap
 
         def get_raw(self, key: TileKey) -> Optional[np.ndarray]:
             """Return the raw numpy array for a tile, or None if not loaded.
@@ -370,6 +418,7 @@ if _QT_AVAILABLE:
             settings : DisplaySettings
                 New display parameters.
             """
+            self._log.debug("set_display_settings: re-rendering %d cached tiles", len(self._raw_cache))
             self._settings = settings
             self._pixmap_cache.clear()
             for key in self._raw_cache:
@@ -381,7 +430,25 @@ if _QT_AVAILABLE:
             return len(self._pending) > 0
 
         def clear(self) -> None:
-            """Discard all cached tiles and pixmaps."""
+            """Discard all cached tiles and pixmaps.
+
+            Increments the generation counter so any in-flight workers
+            from this cache instance will discard their results instead
+            of storing them in the cache of a replacement instance.
+            """
+            self._log.info(
+                "clear: discarding %d raw tiles, %d pending, gen %d -> %d",
+                len(self._raw_cache), len(self._pending),
+                self._generation, self._generation + 1,
+            )
+            self._generation += 1
+            self._drain_timer.stop()
+            # Flush any remaining items in the queue (discard them)
+            while not self._tile_queue.empty():
+                try:
+                    self._tile_queue.get_nowait()
+                except _queue.Empty:
+                    break
             self._raw_cache.clear()
             self._pixmap_cache.clear()
             self._cache_bytes = 0
@@ -431,10 +498,15 @@ if _QT_AVAILABLE:
                     continue
 
             if not samples:
+                self._log.warning("_sample_overview: no samples collected")
                 return
 
             # Store the combined sample for on-demand percentile computation
             self._overview_sample = np.concatenate(samples)
+            self._log.info(
+                "_sample_overview: %d samples, %d pixels total",
+                len(samples), len(self._overview_sample),
+            )
             self._global_min = float(np.nanmin(self._overview_sample))
             self._global_max = float(np.nanmax(self._overview_sample))
             # Pre-compute the mean for remap functions that need it
@@ -504,6 +576,7 @@ if _QT_AVAILABLE:
 
         def _enqueue_load(self, key: TileKey) -> None:
             """Submit a tile load job to the thread pool."""
+            self._log.debug("_enqueue_load: %s", key)
             self._pending.add(key)
 
             factor = 1 << key.level
@@ -515,6 +588,22 @@ if _QT_AVAILABLE:
             row_end = min(row_start + ts * factor, self._rows)
             col_end = min(col_start + ts * factor, self._cols)
 
+            # Capture current generation so stale workers can be
+            # detected after clear() / replacement.
+            gen = self._generation
+            tile_queue = self._tile_queue
+            proxy = self._proxy
+
+            def _guarded_callback(k: TileKey, data: np.ndarray) -> None:
+                # Put data into thread-safe queue for main-thread
+                # processing.  No TileCache state is modified here.
+                tile_queue.put((gen, k, data))
+                # Notify main thread (lightweight signal, no data).
+                try:
+                    proxy.tile_notify.emit()
+                except RuntimeError:
+                    pass  # Proxy deleted during shutdown
+
             worker = _TileLoadWorker(
                 key=key,
                 reader=self._reader,
@@ -524,30 +613,57 @@ if _QT_AVAILABLE:
                 col_end=col_end,
                 factor=factor,
                 mutex=self._mutex,
-                callback=self._on_tile_loaded,
+                callback=_guarded_callback,
             )
             self._pool.start(worker)
 
-        def _on_tile_loaded(self, key: TileKey, data: np.ndarray) -> None:
-            """Handle a completed tile load (called from worker thread)."""
-            self._pending.discard(key)
+        def _drain_queue(self) -> None:
+            """Drain the tile data queue on the main thread.
 
-            # Evict old tiles if over budget
-            tile_bytes = data.nbytes
-            while self._cache_bytes + tile_bytes > self._max_bytes and self._raw_cache:
-                evict_key, evict_arr = self._raw_cache.popitem(last=False)
-                self._cache_bytes -= evict_arr.nbytes
-                self._pixmap_cache.pop(evict_key, None)
+            Called via QueuedConnection from tile_notify signal AND
+            periodically by the safety-net timer.  Processes all
+            pending tile data, storing in cache, rendering QPixmaps,
+            and emitting tile_ready for each.
+            """
+            processed = 0
+            while True:
+                try:
+                    gen, key, arr = self._tile_queue.get_nowait()
+                except _queue.Empty:
+                    break
 
-            # Store raw tile
-            self._raw_cache[key] = data
-            self._cache_bytes += tile_bytes
+                # Skip tiles from a stale generation
+                if gen != self._generation:
+                    continue
 
-            # Render to pixmap
-            self._render_pixmap(key)
+                self._pending.discard(key)
 
-            # Notify main thread
-            self._proxy.tile_ready.emit(key.level, key.tile_row, key.tile_col)
+                # None data means the worker failed (e.g., reader closed).
+                # Discard from pending but don't cache.
+                if arr is None:
+                    continue
+
+                # Evict old tiles if over budget
+                tile_bytes = arr.nbytes
+                while (self._cache_bytes + tile_bytes > self._max_bytes
+                       and self._raw_cache):
+                    evict_key, evict_arr = self._raw_cache.popitem(last=False)
+                    self._cache_bytes -= evict_arr.nbytes
+                    self._pixmap_cache.pop(evict_key, None)
+
+                # Store raw tile
+                self._raw_cache[key] = arr
+                self._cache_bytes += tile_bytes
+
+                # Render QPixmap (safe — we are on the GUI thread)
+                self._render_pixmap(key)
+
+                # Notify listeners (TiledImageCanvas)
+                self.tile_ready.emit(key.level, key.tile_row, key.tile_col)
+                processed += 1
+
+            if processed > 0:
+                self._log.debug("Drained %d tiles from queue", processed)
 
         def _render_pixmap(self, key: TileKey) -> None:
             """Render a cached raw tile to QPixmap with current settings.

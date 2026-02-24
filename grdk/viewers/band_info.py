@@ -82,14 +82,30 @@ def get_band_info(reader: Any) -> List[BandInfo]:
     except ImportError:
         pass
 
-    # --- Sentinel-1 SLC: single band, named by polarization ---
+    # --- Sentinel-1 SLC: all available polarizations ---
     try:
         from grdl.IO.sar.sentinel1_slc import Sentinel1SLCReader
         if isinstance(reader, Sentinel1SLCReader):
+            # List all available polarizations so the combo shows them all
+            all_pols = []
+            try:
+                all_pols = reader.get_available_polarizations()
+            except Exception:
+                pass
             swath_info = reader.metadata.get('swath_info')
+            swath = getattr(swath_info, 'swath', None) if swath_info else None
+
+            if len(all_pols) > 1:
+                return [
+                    BandInfo(
+                        i, pol,
+                        f"{swath} {pol}" if swath else f"Polarization {pol}",
+                    )
+                    for i, pol in enumerate(all_pols)
+                ]
+            # Single pol fallback
             if swath_info:
                 pol = getattr(swath_info, 'polarization', None)
-                swath = getattr(swath_info, 'swath', None)
                 name = pol or "Complex"
                 desc = f"{swath} {pol}" if swath and pol else name
                 return [BandInfo(0, name, desc)]
@@ -118,6 +134,28 @@ def get_band_info(reader: Any) -> List[BandInfo]:
         from grdl.IO.sar.crsd import CRSDReader
         if isinstance(reader, CRSDReader):
             return [BandInfo(0, "Complex", "Compensated received signal")]
+    except ImportError:
+        pass
+
+    # --- TerraSAR-X / TanDEM-X: all available polarizations ---
+    try:
+        from grdl.IO.sar.terrasar import TerraSARReader
+        if isinstance(reader, TerraSARReader):
+            # List all available polarizations so the combo shows them all
+            all_pols = []
+            try:
+                all_pols = reader.get_available_polarizations()
+            except Exception:
+                pass
+            if len(all_pols) > 1:
+                return [
+                    BandInfo(i, pol, f"Polarization {pol}")
+                    for i, pol in enumerate(all_pols)
+                ]
+            pol = getattr(reader, '_requested_polarization', None)
+            if pol:
+                return [BandInfo(0, pol, f"Polarization {pol}")]
+            return [BandInfo(0, "Complex", "SAR")]
     except ImportError:
         pass
 
