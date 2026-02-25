@@ -89,9 +89,99 @@ docs/             — architecture and API documentation
 | orange3, orange-widget-base | Orange Canvas widget framework |
 | napari | Stack viewer with polygon drawing |
 
-## Image Viewer (ImageCanvas)
+## Standalone Viewer (`grdk-viewer`)
 
-All image display in GRDK is built on a shared `ImageCanvas` component — a `QGraphicsView`-based interactive viewer with:
+GRDK includes a standalone geospatial image viewer for SAR, EO/IR, and multispectral imagery. Launch it from the command line:
+
+```bash
+grdk-viewer                          # empty window
+grdk-viewer /path/to/image.tif       # open a file on startup
+grdk-viewer /path/to/product_dir     # open a product directory (SAFE, BIOMASS, etc.)
+```
+
+### Supported Formats
+
+The viewer opens any format supported by [GRDL](../grdl)'s reader library:
+
+| Format | Reader | Notes |
+|--------|--------|-------|
+| GeoTIFF | `GeoTIFFReader` | Single- and multi-band |
+| NITF / SICD | `SICDReader` | SAR complex data with full SICD metadata |
+| SIDD | `SIDDReader` | SAR detected images |
+| CPHD | `CPHDReader` | Compensated phase history |
+| CRSD | `CRSDReader` | Compensated received signal |
+| BIOMASS L1 | `BIOMASSL1Reader` | ESA BIOMASS P-band SAR (HH, HV, VH, VV) |
+| Sentinel-1 IW SLC | `Sentinel1SLCReader` | Per-swath (IW1/IW2/IW3), per-polarization (VV/VH/HH/HV) |
+| Sentinel-2 L1C/L2A | `Sentinel2Reader` | Per-band spectral data and TCI |
+| TerraSAR-X / TanDEM-X | `TerraSARReader` | StripMap, SpotLight, ScanSAR |
+| NISAR RSLC / GSLC | `NISARReader` | L-band and S-band, per-frequency/polarization |
+| JPEG2000 | `JP2Reader` | Wavelet-compressed imagery |
+
+### Display Features
+
+- **Tiled rendering** — streams image tiles on demand; handles imagery of any size without loading the full image into memory
+- **Dual-pane view** — side-by-side comparison with synchronized pan/zoom; automatic split when opening multi-band or multi-polarization data
+- **SAR complex remap** — automatic log-magnitude display for complex-valued SAR data
+- **Contrast / brightness / gamma** — real-time adjustment via per-pane controls
+- **Dynamic range windowing** — percentile-based or manual min/max clipping
+- **Colormaps** — grayscale, viridis, inferno, plasma, hot
+- **Band / polarization selector** — combo box shows named bands (e.g. HH, HV, B04) with automatic reader swap for multi-polarization SAR
+- **Coordinate bar** — live latitude/longitude readout under the cursor (requires geolocation metadata)
+- **Color bar** — data-range reference strip alongside each pane
+- **GeoJSON vector overlay** — load and display vector features on top of imagery
+
+### Sentinel-1 IW SLC
+
+When opening a Sentinel-1 SAFE product the viewer prompts for swath selection (IW1 / IW2 / IW3) and automatically enables burst boundary masking to zero out invalid border samples. Multi-polarization products (e.g. VV + VH) are offered as a dual-pane split.
+
+### Geolocation
+
+The viewer creates geolocation models automatically from reader metadata:
+
+| Sensor | Geolocation Method |
+|--------|--------------------|
+| SICD | SICD projection model |
+| BIOMASS | Ground control point interpolation |
+| Sentinel-1 SLC | Annotation grid interpolation |
+| TerraSAR-X | Annotation grid interpolation |
+| NISAR RSLC | 3-D geolocation grid interpolation (middle height layer) |
+| NISAR GSLC | Affine transform (already geocoded) |
+| Sentinel-2 | Affine transform from CRS metadata |
+| GeoTIFF | Affine transform from CRS metadata |
+
+### Processing Tools
+
+Available from the **Tools** menu:
+
+| Tool | Description |
+|------|-------------|
+| **Orthorectify** | Projects imagery onto a geographic grid. In dual mode, both panes are orthorectified to a shared output grid for geo-synced comparison. Supports SICD, BIOMASS, Sentinel-1, TerraSAR-X, NISAR, and GeoTIFF sources. |
+| **Combine to RGB** | Builds a false-color RGB composite from any combination of available bands/polarizations (e.g. HH→R, HV→G, VV→B). Includes derived channels like HH+VV and HH−VV. |
+
+### Export
+
+| Action | Shortcut | Output |
+|--------|----------|--------|
+| **Export pane as image** | Ctrl+E | Saves the current pane view as PNG, JPEG, or BMP (screen capture) |
+| **Export data** | Ctrl+Shift+E | Saves processing results: ortho → GeoTIFF, RGB composite → TIFF / PNG / JPEG (full resolution) |
+
+### Programmatic API
+
+The viewer can be embedded in any PyQt6 application:
+
+```python
+from grdk.viewers.main_window import ViewerMainWindow
+
+window = ViewerMainWindow()
+window.open_file("/path/to/image.tif")           # file or directory
+window.open_reader(reader, geolocation=geo)       # grdl reader + geolocation
+window.set_array(arr, geolocation=geo, title="…") # numpy array
+window.show()
+```
+
+## Image Canvas (ImageCanvas)
+
+The underlying display component used by the viewer and all GRDK widgets. A `QGraphicsView`-based interactive image display with:
 
 - **Pan** (mouse drag), **Zoom** (scroll wheel, double-click to fit)
 - **Contrast/Brightness** adjustment (does not modify source data)
@@ -102,7 +192,8 @@ All image display in GRDK is built on a shared `ImageCanvas` component — a `QG
 - **Pixel inspector** (hover to read raw values)
 
 Two variants:
-- `ImageCanvas` — full interactive viewer for main display areas
+- `TiledImageCanvas` — tiled, streaming display for large imagery (used by the standalone viewer)
+- `ImageCanvas` — full interactive viewer for in-memory arrays
 - `ImageCanvasThumbnail` — non-interactive fixed-size variant for grids and galleries
 
 See [docs/image-canvas.md](docs/image-canvas.md) for the API reference.
@@ -131,7 +222,7 @@ pytest tests/test_image_canvas.py -v
 pytest tests/ --cov=grdk --cov-report=term-missing
 ```
 
-**149+ tests** across 15 test modules. Widget and Qt tests auto-skip when no display is available.
+**174+ tests** across 15 test modules. Widget and Qt tests auto-skip when no display is available.
 
 ## Project Structure (All Files)
 
@@ -161,7 +252,15 @@ These modules are imported by GRDK widgets from the `grdl_rt` package:
 ### Viewers (`grdk/viewers/`)
 | File | Purpose |
 |------|---------|
+| `main_window.py` | ViewerMainWindow — standalone viewer with menus, toolbar, ortho, RGB, export |
+| `dual_viewer.py` | DualGeoViewer — synchronized dual-pane viewer with crop-to-overlap |
+| `geo_viewer.py` | GeoViewer — single-pane viewer with geolocation, file opening, band info |
+| `tiled_canvas.py` | TiledImageCanvas — streaming tiled display for large imagery |
+| `tile_cache.py` | TileCache — async tile loading with LRU eviction |
 | `image_canvas.py` | ImageCanvas, ImageCanvasThumbnail, DisplaySettings, normalize_array |
+| `band_info.py` | BandInfo, get_band_info — named band metadata extraction per reader type |
+| `coordinate_bar.py` | CoordinateBar — live lat/lon readout widget |
+| `vector_overlay.py` | GeoJSON vector overlay on image canvases |
 | `stack_viewer.py` | NapariStackViewer — multi-layer image viewer with polygon drawing |
 | `chip_gallery.py` | ChipGalleryWidget — scrollable thumbnail grid with click-to-label |
 | `polygon_tools.py` | chip_stack_at_polygons — polygon-based chip extraction |
