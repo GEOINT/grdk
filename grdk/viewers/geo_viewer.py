@@ -311,6 +311,16 @@ def create_geolocation(reader: Any) -> Optional[Any]:
         pass
 
     try:
+        from grdl.IO.sar.nisar import NISARReader
+        if isinstance(reader, NISARReader):
+            from grdl.geolocation.sar.nisar import NISARGeolocation
+            geo = NISARGeolocation.from_reader(reader)
+            _log.info("create_geolocation: NISARGeolocation created")
+            return geo
+    except ImportError:
+        pass
+
+    try:
         from grdl.IO.sar.biomass import BIOMASSL1Reader
         if isinstance(reader, BIOMASSL1Reader):
             gcps = reader.metadata.get('gcps')

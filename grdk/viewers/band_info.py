@@ -159,6 +159,28 @@ def get_band_info(reader: Any) -> List[BandInfo]:
     except ImportError:
         pass
 
+    # --- NISAR: polarizations per frequency ---
+    try:
+        from grdl.IO.sar.nisar import NISARReader
+        if isinstance(reader, NISARReader):
+            all_pols = []
+            try:
+                all_pols = reader.get_available_polarizations()
+            except Exception:
+                pass
+            freq = getattr(reader.metadata, 'frequency', None)
+            freq_label = f"Freq{freq}" if freq else ""
+            if len(all_pols) > 1:
+                return [
+                    BandInfo(i, pol, f"{freq_label} {pol}".strip())
+                    for i, pol in enumerate(all_pols)
+                ]
+            pol = getattr(reader.metadata, 'polarization', None) or "Complex"
+            desc = f"{freq_label} {pol}".strip() if freq_label else pol
+            return [BandInfo(0, pol, desc)]
+    except ImportError:
+        pass
+
     # --- SIDD: single detected band ---
     try:
         from grdl.IO.sar.sidd import SIDDReader

@@ -150,6 +150,10 @@ if _QT_AVAILABLE:
             # {pane: ['HH', 'HV', 'VH', 'VV']} or {pane: None}
             self._pane_pol_names: dict = {0: None, 1: None}
 
+            # Cached results for data export
+            self._ortho_results: dict = {}       # {pane: OrthoResult}
+            self._rgb_result: Optional[tuple] = None  # (ndarray, geo)
+
             # Wire signals
             self._viewer.band_info_changed.connect(
                 self._on_band_info_changed,
@@ -198,12 +202,16 @@ if _QT_AVAILABLE:
             try:
                 self._viewer.open_file(filepath, pane=pane)
                 self.setWindowTitle(f"GRDK Viewer \u2014 {filepath}")
+                self._ortho_results.pop(pane, None)
+                self._rgb_result = None
                 self._update_metadata_table()
                 self._update_remap_state()
                 self._sync_display_controls(pane)
                 self._update_colorbar_state(pane)
                 self._update_tools_state()
                 self._update_pane_pol_names(pane)
+                # Sentinel-1: swath selection and burst masking
+                self._configure_sentinel1(filepath, pane)
                 self.statusBar().showMessage(f"Opened: {filepath}")
                 _log.info("open_file: success")
             except Exception as e:
@@ -241,6 +249,8 @@ if _QT_AVAILABLE:
                     self.setWindowTitle(f"GRDK Viewer \u2014 {title}")
                 else:
                     self.setWindowTitle("GRDK Viewer \u2014 [reader]")
+                self._ortho_results.pop(pane, None)
+                self._rgb_result = None
                 self._update_metadata_table()
                 self._update_remap_state()
                 self._sync_display_controls(pane)
@@ -254,6 +264,54 @@ if _QT_AVAILABLE:
                     self, "Open Error",
                     f"Could not open reader:\n{e}",
                 )
+
+        def _configure_sentinel1(
+            self, filepath: str, pane: int,
+        ) -> None:
+            """Offer swath selection and enable burst masking for S1 SLC.
+
+            Called immediately after ``open_file()`` succeeds.  If the
+            reader is a ``Sentinel1SLCReader`` with multiple swaths,
+            prompts the user to choose one.  Always enables burst
+            valid-sample masking so that blank lines at burst boundaries
+            are zeroed.
+            """
+            viewer = (
+                self._viewer.left_viewer if pane == 0
+                else self._viewer.right_viewer
+            )
+            reader = viewer._reader
+            try:
+                from grdl.IO.sar.sentinel1_slc import Sentinel1SLCReader
+                if not isinstance(reader, Sentinel1SLCReader):
+                    return
+            except ImportError:
+                return
+
+            swaths = reader.get_available_swaths()
+            if len(swaths) > 1:
+                from PyQt6.QtWidgets import QInputDialog
+                current = getattr(reader, '_swath', swaths[0])
+                idx = swaths.index(current) if current in swaths else 0
+                choice, ok = QInputDialog.getItem(
+                    self, "Select Swath",
+                    f"Available swaths: {', '.join(swaths)}\n"
+                    "Select swath:",
+                    swaths, idx, False,
+                )
+                if ok and choice != current:
+                    from grdk.viewers.geo_viewer import create_geolocation
+                    new_reader = Sentinel1SLCReader(
+                        filepath,
+                        swath=choice,
+                        polarization=reader._polarization,
+                    )
+                    new_reader.set_apply_valid_mask(True)
+                    geo = create_geolocation(new_reader)
+                    self.open_reader(new_reader, geolocation=geo, pane=pane)
+                    return
+            # Same swath (or single swath) — just enable masking
+            reader.set_apply_valid_mask(True)
 
         def set_array(
             self,
@@ -347,9 +405,18 @@ if _QT_AVAILABLE:
             self._load_vector_action.setShortcut(QKeySequence("Ctrl+G"))
             self._load_vector_action.triggered.connect(self._on_load_vector)
 
-            self._export_action = QAction("&Export View...", self)
+            self._export_action = QAction("Export pane as &image...", self)
             self._export_action.setShortcut(QKeySequence("Ctrl+E"))
             self._export_action.triggered.connect(self._on_export)
+
+            self._export_data_action = QAction("Export &data...", self)
+            self._export_data_action.setShortcut(
+                QKeySequence("Ctrl+Shift+E"),
+            )
+            self._export_data_action.setEnabled(False)
+            self._export_data_action.triggered.connect(
+                self._on_export_data,
+            )
 
             self._exit_action = QAction("E&xit", self)
             self._exit_action.setShortcut(QKeySequence.StandardKey.Quit)
@@ -425,6 +492,8 @@ if _QT_AVAILABLE:
             tools_menu = self.menuBar().addMenu("&Tools")
             tools_menu.addAction(self._ortho_action)
             tools_menu.addAction(self._rgb_action)
+            tools_menu.addSeparator()
+            tools_menu.addAction(self._export_data_action)
 
             view_menu = self.menuBar().addMenu("&View")
             view_menu.addAction(self._fit_action)
@@ -766,6 +835,11 @@ if _QT_AVAILABLE:
                 )
                 if swath_info:
                     return getattr(swath_info, 'polarization', None)
+            # Generic: metadata.polarization (NISAR, etc.)
+            if meta is not None:
+                p = getattr(meta, 'polarization', None)
+                if p:
+                    return p
             return None
 
         @staticmethod
@@ -791,9 +865,13 @@ if _QT_AVAILABLE:
             try:
                 from grdl.IO.sar.sentinel1_slc import Sentinel1SLCReader
                 if isinstance(reader, Sentinel1SLCReader):
-                    return Sentinel1SLCReader(
-                        filepath, polarization=polarization,
+                    new_reader = Sentinel1SLCReader(
+                        filepath,
+                        swath=reader._swath,
+                        polarization=polarization,
                     )
+                    new_reader.set_apply_valid_mask(True)
+                    return new_reader
             except (ImportError, Exception):
                 pass
 
@@ -802,6 +880,17 @@ if _QT_AVAILABLE:
                 if isinstance(reader, TerraSARReader):
                     return TerraSARReader(
                         filepath, polarization=polarization,
+                    )
+            except (ImportError, Exception):
+                pass
+
+            try:
+                from grdl.IO.sar.nisar import NISARReader
+                if isinstance(reader, NISARReader):
+                    return NISARReader(
+                        filepath,
+                        frequency=reader._frequency,
+                        polarization=polarization,
                     )
             except (ImportError, Exception):
                 pass
@@ -1080,6 +1169,12 @@ if _QT_AVAILABLE:
                     is_sar = True
             except ImportError:
                 pass
+            try:
+                from grdl.IO.sar.nisar import NISARReader
+                if isinstance(reader, NISARReader):
+                    is_sar = True
+            except ImportError:
+                pass
             if not is_sar and reader is not None:
                 try:
                     import numpy as np
@@ -1129,6 +1224,13 @@ if _QT_AVAILABLE:
                 try:
                     from grdl.IO.sar.terrasar import TerraSARReader
                     if isinstance(reader, TerraSARReader):
+                        is_multipol_sar = True
+                except ImportError:
+                    pass
+            if not is_multipol_sar:
+                try:
+                    from grdl.IO.sar.nisar import NISARReader
+                    if isinstance(reader, NISARReader):
                         is_multipol_sar = True
                 except ImportError:
                     pass
@@ -1244,6 +1346,11 @@ if _QT_AVAILABLE:
             # RGB: enabled when at least 2 distinct bands are available
             self._rgb_action.setEnabled(
                 self._count_available_bands() >= 2,
+            )
+
+            # Export data: enabled when ortho or RGB results are cached
+            self._export_data_action.setEnabled(
+                bool(self._ortho_results) or self._rgb_result is not None,
             )
 
         # --- RGB Combine ---
@@ -1494,6 +1601,7 @@ if _QT_AVAILABLE:
                 ], axis=0)
                 del r, g, b
 
+                self._rgb_result = (rgb, geo)
                 self._display_rgb_result(rgb, geo, pane, "RGB Composite")
 
             except Exception as e:
@@ -1673,6 +1781,7 @@ if _QT_AVAILABLE:
 
                 _log.info("Orthorectify: result shape=%s", result.data.shape)
 
+                self._ortho_results[pane] = result
                 self._viewer.set_array(
                     result.data,
                     geolocation=result.output_grid,
@@ -1759,6 +1868,7 @@ if _QT_AVAILABLE:
 
                 # Display in both panes
                 for p in (0, 1):
+                    self._ortho_results[p] = result
                     self._viewer.set_array(
                         result.data,
                         geolocation=result.output_grid,
@@ -1871,6 +1981,7 @@ if _QT_AVAILABLE:
 
                 # Display results in both panes
                 for pane_idx, (result, pol_names) in results.items():
+                    self._ortho_results[pane_idx] = result
                     self._viewer.set_array(
                         result.data,
                         geolocation=result.output_grid,
@@ -1992,9 +2103,97 @@ if _QT_AVAILABLE:
                         f"Could not load GeoJSON:\n{filepath}\n\n{e}",
                     )
 
-        def _on_export(self) -> None:
-            """Handle File > Export View.
+        def _on_export_data(self) -> None:
+            """Handle Tools > Export data.
 
+            Exports cached ortho results as GeoTIFF, or cached RGB
+            results as PNG/JPEG.  Enabled only when ortho or RGB
+            processing has been performed.
+            """
+            import os
+            import numpy as np
+            from PyQt6.QtCore import Qt as _Qt
+
+            pane = self._viewer.active_pane
+            ortho = self._ortho_results.get(pane)
+
+            if ortho is not None:
+                filepath, _ = QFileDialog.getSaveFileName(
+                    self, "Export Ortho Data", "",
+                    "GeoTIFF (*.tif);;All Files (*)",
+                )
+                if not filepath:
+                    return
+                _, ext = os.path.splitext(filepath)
+                if not ext:
+                    filepath += '.tif'
+                QApplication.setOverrideCursor(
+                    _Qt.CursorShape.WaitCursor,
+                )
+                try:
+                    ortho.save_geotiff(filepath)
+                    self.statusBar().showMessage(
+                        f"Exported GeoTIFF: {filepath}",
+                    )
+                except Exception as e:
+                    _log.error("Export GeoTIFF failed: %s", e, exc_info=True)
+                    QMessageBox.critical(
+                        self, "Export Error",
+                        f"Could not export GeoTIFF:\n{e}",
+                    )
+                finally:
+                    QApplication.restoreOverrideCursor()
+                return
+
+            if self._rgb_result is not None:
+                filepath, sel = QFileDialog.getSaveFileName(
+                    self, "Export RGB", "",
+                    "TIFF (*.tif);;PNG (*.png);;JPEG (*.jpg);;All Files (*)",
+                )
+                if not filepath:
+                    return
+                _, ext = os.path.splitext(filepath)
+                if not ext:
+                    if 'TIFF' in sel:
+                        filepath += '.tif'
+                    elif 'PNG' in sel:
+                        filepath += '.png'
+                    else:
+                        filepath += '.jpg'
+                QApplication.setOverrideCursor(
+                    _Qt.CursorShape.WaitCursor,
+                )
+                try:
+                    from PIL import Image
+                    rgb, _ = self._rgb_result
+                    # (3, H, W) float [0,1] → (H, W, 3) uint8
+                    arr = (
+                        np.clip(rgb, 0, 1).transpose(1, 2, 0) * 255
+                    ).astype(np.uint8)
+                    Image.fromarray(arr).save(filepath)
+                    self.statusBar().showMessage(
+                        f"Exported RGB: {filepath}",
+                    )
+                except Exception as e:
+                    _log.error("Export RGB failed: %s", e, exc_info=True)
+                    QMessageBox.critical(
+                        self, "Export Error",
+                        f"Could not export RGB image:\n{e}",
+                    )
+                finally:
+                    QApplication.restoreOverrideCursor()
+                return
+
+            QMessageBox.information(
+                self, "Export Data",
+                "No ortho or RGB results to export.\n"
+                "Run Orthorectify or Combine to RGB first.",
+            )
+
+        def _on_export(self) -> None:
+            """Handle File > Export pane as image.
+
+            Saves the current pane view as a raster image (PNG/JPEG/BMP).
             In dual mode, prompts the user to choose which pane to
             export.  Ensures the file path has an appropriate extension
             based on the selected format filter.
