@@ -388,6 +388,8 @@ class TestOpenAny:
 
     def test_invalid_file_raises(self):
         """open_any should raise for invalid files."""
+        import gc
+
         from grdk.viewers.geo_viewer import open_any
 
         with tempfile.NamedTemporaryFile(suffix='.tif', delete=False) as f:
@@ -398,7 +400,13 @@ class TestOpenAny:
             with pytest.raises((ValueError, Exception)):
                 open_any(tmppath)
         finally:
-            os.unlink(tmppath)
+            # Force cleanup of reader objects that may hold file handles
+            # (e.g. sarpy's BaseReader.__del__) before unlinking on Windows.
+            gc.collect()
+            try:
+                os.unlink(tmppath)
+            except PermissionError:
+                pass  # Windows file-locking; temp dir will clean up
 
 
 # ---------------------------------------------------------------------------
