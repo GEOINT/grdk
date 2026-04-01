@@ -52,8 +52,15 @@ grdk-viewer = "grdk.viewers.main_window:main"
 "GEODEV" = "grdk.widgets.geodev"
 "GRDK Admin" = "grdk.widgets.admin"
 
+[tool.setuptools]
+include-package-data = true
+
 [tool.setuptools.packages.find]
 include = ["grdk*"]
+
+[tool.setuptools.data-files]
+"share/grdk" = ["README.md", "CHANGELOG.md", "LICENSE"]
+"share/grdk/docs" = ["docs/architecture.md", "docs/image-canvas.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
