@@ -55,6 +55,27 @@ except ImportError:
     _QT_AVAILABLE = False
 
 
+def _percentile_stretch(img: np.ndarray, low: float = 2.0, high: float = 98.0) -> np.ndarray:
+    """Percentile-stretch *img* to ``[0, 1]`` float32, per-band."""
+    img = img.astype(np.float32)
+    if img.ndim == 2:
+        lo, hi = np.nanpercentile(img, low), np.nanpercentile(img, high)
+        if hi > lo:
+            img = (img - lo) / (hi - lo)
+        return np.clip(img, 0.0, 1.0)
+    # Multi-band: stretch each band independently
+    out = np.empty_like(img, dtype=np.float32)
+    # Work band-last; if CYX was already converted to YXC, last axis is bands
+    for b in range(img.shape[-1]):
+        band = img[..., b]
+        lo, hi = np.nanpercentile(band, low), np.nanpercentile(band, high)
+        if hi > lo:
+            out[..., b] = np.clip((band - lo) / (hi - lo), 0.0, 1.0)
+        else:
+            out[..., b] = 0.0
+    return out
+
+
 class NapariStackViewer:
     """Embeddable napari-based image stack viewer.
 
@@ -128,7 +149,16 @@ class NapariStackViewer:
         Parameters
         ----------
         images : List[np.ndarray]
-            Image arrays. Each can be (rows, cols) or (rows, cols, bands).
+            Image arrays. Accepted layouts:
+
+            * ``(H, W)`` — single band greyscale
+            * ``(H, W, C)`` — multi-band in YXC order (napari native)
+            * ``(C, H, W)`` — multi-band in CYX order (GRDL convention);
+              automatically transposed to ``(H, W, C)``
+
+            Float32 arrays in ``[0, 1]`` are passed directly to napari.
+            Other numeric types are normalised via percentile stretch so
+            they display sensibly.
         names : Optional[List[str]]
             Display names for each image.
         """
@@ -140,17 +170,31 @@ class NapariStackViewer:
         for i, img in enumerate(images):
             name = names[i] if names and i < len(names) else f"Image {i}"
 
-            # Handle complex imagery (SAR)
-            if np.iscomplexobj(img):
-                img = np.abs(img)
+            # ── Axis-order normalisation ────────────────────────────────
+            # Convert CYX → YXC so napari gets the correct layout.
+            # Heuristic: the leading dimension is channels when it is
+            # small (≤ 16) and both trailing dimensions are larger.
+            if (img.ndim == 3
+                    and img.shape[0] <= 16
+                    and img.shape[1] > img.shape[0]
+                    and img.shape[2] > img.shape[0]):
+                img = np.moveaxis(img, 0, -1)  # (C, H, W) → (H, W, C)
 
-            # Handle multi-band (show as RGB or first band)
+            # ── Complex SAR imagery ─────────────────────────────────────
+            if np.iscomplexobj(img):
+                img = np.abs(img).astype(np.float32)
+
+            # ── Intensity normalisation ─────────────────────────────────
+            # float32 already in [0,1] (e.g. Pauli RGB): pass through.
+            # Everything else: per-band percentile stretch → [0,1].
+            if img.dtype != np.float32 or img.max() > 1.0 or img.min() < 0.0:
+                img = _percentile_stretch(img)
+
+            # ── Add to napari ───────────────────────────────────────────
             if img.ndim == 3 and img.shape[2] >= 3:
-                display_img = img[:, :, :3]
-                self._viewer.add_image(display_img, name=name, rgb=True)
+                self._viewer.add_image(img[:, :, :3], name=name, rgb=True)
             elif img.ndim == 3:
-                display_img = img[:, :, 0]
-                self._viewer.add_image(display_img, name=name)
+                self._viewer.add_image(img[:, :, 0], name=name)
             else:
                 self._viewer.add_image(img, name=name)
 

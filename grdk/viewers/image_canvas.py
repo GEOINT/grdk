@@ -216,6 +216,28 @@ def normalize_array(
         arr.shape, arr.dtype, settings.band_index,
     )
 
+    # Fast path: pre-normalized float32/float64 RGB in CYX layout.
+    # Emitted by decomposition processors (e.g., PauliDecompositionProcessor)
+    # that already apply per-channel percentile stretching internally.
+    # Values are already in [0, 1]; skip the full pipeline and scale directly.
+    if (
+        arr.ndim == 3
+        and arr.shape[0] == 3
+        and np.issubdtype(arr.dtype, np.floating)
+        and settings.band_index is None
+        and settings.remap_function is None
+        and settings.window_min is None
+        and settings.window_max is None
+    ):
+        out = arr.astype(np.float64)
+        # Apply contrast/brightness/gamma if non-default, then scale.
+        if settings.contrast != 1.0 or settings.brightness != 0.0:
+            out = settings.contrast * (out - 0.5) + 0.5 + settings.brightness
+        if settings.gamma != 1.0:
+            out = np.clip(out, 0.0, 1.0)
+            out = np.power(out, 1.0 / settings.gamma)
+        return np.clip(out * 255.0, 0, 255).astype(np.uint8)
+
     # 1. Complex → magnitude
     if np.iscomplexobj(arr):
         arr = np.abs(arr)

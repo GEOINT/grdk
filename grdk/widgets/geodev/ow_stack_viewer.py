@@ -35,7 +35,7 @@ Modified
 """
 
 # Standard library
-from typing import List, Optional
+from typing import Any, List, Optional
 
 # Third-party
 import numpy as np
@@ -53,6 +53,82 @@ from PyQt6.QtWidgets import (
 from grdl_rt.execution.chip import ChipSet
 from grdk.viewers.polygon_tools import chip_stack_at_polygons
 from grdk.widgets._signals import ImageStack, ChipSetSignal
+
+# Maximum number of pixels (H*W) to load at full resolution for display.
+# Images larger than this are downsampled to keep memory reasonable.
+_MAX_DISPLAY_PIXELS = 4096 * 4096  # ~16 MP
+
+
+def _read_for_display(reader: Any) -> np.ndarray:
+    """Read an image for display, downsampling if needed.
+
+    For readers whose full-resolution image would exceed
+    ``_MAX_DISPLAY_PIXELS``, a downsampled chip is returned
+    using ``read_chip`` with a stride.  This prevents OOM crashes
+    on large SAR images (e.g. NISAR RSLC at 54720 × 26610).
+
+    The Pauli RGB reader (``(3, H, W)`` float32) is always read at
+    full resolution because the Pauli processor already works at
+    whatever resolution the user needs — it hands us the final RGB,
+    not raw SAR.
+    """
+    import math
+
+    meta = getattr(reader, 'metadata', None)
+    rows = getattr(meta, 'rows', None)
+    cols = getattr(meta, 'cols', None)
+
+    if rows is None or cols is None:
+        return reader.read_full()
+
+    total = rows * cols
+    if total <= _MAX_DISPLAY_PIXELS:
+        return reader.read_full()
+
+    # Integer stride so the downsampled image fits within budget
+    stride = math.ceil(math.sqrt(total / _MAX_DISPLAY_PIXELS))
+
+    # Read one stripe of height `stride` at a time and keep only the
+    # first row of each stripe + every stride-th column.  Memory cost
+    # per stripe = stride * cols * dtype_bytes — e.g. for NISAR with
+    # stride=14: 14 * 26610 * 8 bytes ≈ 3 MB per stripe, safe.
+    sampled_rows = list(range(0, rows, stride))
+    out_bands: Optional[int] = None
+    out_is_cyx: Optional[bool] = None
+    stripes: List[np.ndarray] = []
+
+    for r in sampled_rows:
+        r_end = min(r + stride, rows)
+        try:
+            stripe = reader.read_chip(r, r_end, 0, cols)
+        except Exception:
+            return reader.read_full()
+
+        # Take first row of stripe, every stride-th column
+        if stripe.ndim == 2:
+            row_slice = stripe[0, ::stride]      # (out_cols,)
+            if out_bands is None:
+                out_bands = 0                    # greyscale sentinel
+        elif stripe.ndim == 3 and stripe.shape[0] <= 16:
+            row_slice = stripe[:, 0, ::stride]   # (C, out_cols)
+            if out_bands is None:
+                out_bands = stripe.shape[0]; out_is_cyx = True
+        else:
+            row_slice = stripe[0, ::stride, :]   # (out_cols, C)
+            if out_bands is None:
+                out_bands = stripe.shape[-1]; out_is_cyx = False
+
+        stripes.append(row_slice)
+
+    if not stripes:
+        return reader.read_full()
+
+    if out_bands == 0:
+        return np.stack(stripes, axis=0)       # (out_rows, out_cols)
+    elif out_is_cyx:
+        return np.stack(stripes, axis=1)       # (C, out_rows, out_cols)
+    else:
+        return np.stack(stripes, axis=0)       # (out_rows, out_cols, C)
 
 
 class OWStackViewer(OWBaseWidget):
@@ -152,7 +228,7 @@ class OWStackViewer(OWBaseWidget):
             images = []
             for reader in stack.readers:
                 try:
-                    images.append(reader.read_full())
+                    images.append(_read_for_display(reader))
                 except Exception:
                     continue
             self._viewer.load_stack(images, names=stack.names)
