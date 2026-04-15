@@ -155,29 +155,26 @@ def _try_open_readers(filepath: str) -> List[Tuple[Any, str]]:
     if reader is None:
         return []
 
-    # ── NISAR HDF5 multi-pol expansion ───────────────────────────────────────
+    # ── NISAR multi-pol upgrade ───────────────────────────────────────────────
+    # When the file exposes multiple polarizations, upgrade to a single CYX
+    # cube reader (NISARReader with polarizations='all') instead of creating
+    # N separate per-pol readers.  The CYX reader returns (C, rows, cols)
+    # from read_chip/read_full, with all channels described in channel_metadata.
     avail_pols = getattr(
         getattr(reader, 'metadata', None), 'available_polarizations', None
     )
     if avail_pols and len(avail_pols) > 1:
         try:
-            from grdl.IO.sar import NISARReader
-            multi = [
-                (
-                    NISARReader(str(path), polarization=pol),
-                    f"{path.stem} [{pol}]{path.suffix}",
+            from grdl.IO.sar.nisar import NISARReader
+            if isinstance(reader, NISARReader):
+                reader.close()
+                reader = NISARReader(str(path), polarizations='all')
+                logger.info(
+                    "Upgraded NISAR '%s' → CYX multi-pol reader (%s)",
+                    path.name, reader.metadata.available_polarizations,
                 )
-                for pol in avail_pols
-            ]
-            reader.close()
-            logger.info(
-                "Expanded NISAR '%s' → %d polarization readers %s",
-                path.name, len(multi), avail_pols,
-            )
-            return multi
         except Exception as exc:
-            logger.debug("NISAR multi-pol expansion failed: %s", exc)
-            # Fall through — keep the single reader
+            logger.debug("NISAR multi-pol upgrade failed: %s", exc)
 
     return [(reader, path.name)]
 

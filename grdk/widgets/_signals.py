@@ -145,3 +145,44 @@ class GrdkProjectSignal:
 
     def __init__(self, project: Optional[Any] = None) -> None:
         self.project = project
+
+
+class CovarianceMatrixSignal:
+    """Signal type: a spatially-averaged polarimetric matrix.
+
+    Carries the T3 coherency matrix or C3 covariance matrix computed
+    from quad-pol SAR data, along with the metadata required for
+    downstream Pauli decomposition and spatial coordinate display.
+
+    Parameters
+    ----------
+    matrix : np.ndarray
+        Complex array of shape ``(N, N, rows, cols)`` (axis_order='CCYX').
+        N is 3 for quad-pol, 2 for dual-pol.
+    matrix_type : str
+        ``'T3'`` for the Pauli coherency matrix or ``'C3'`` for the
+        lexicographic covariance matrix.  Downstream decomposition nodes
+        use this tag to validate compatibility.
+    window_size : int
+        Spatial averaging window used when computing the matrix.
+    source_metadata : Dict[str, Any]
+        Stack-level metadata inherited from the originating
+        ``ImageStack`` (polarimetric mode, sensor, timestamps, etc.).
+    geolocation : optional
+        GRDL Geolocation object for spatial coordinate display in the
+        Stack Viewer.
+    """
+
+    def __init__(
+        self,
+        matrix: Optional['np.ndarray'] = None,
+        matrix_type: str = 'T3',
+        window_size: int = 7,
+        source_metadata: Optional[Dict[str, Any]] = None,
+        geolocation: Optional[Any] = None,
+    ) -> None:
+        self.matrix = matrix
+        self.matrix_type = matrix_type
+        self.window_size = window_size
+        self.source_metadata = source_metadata or {}
+        self.geolocation = geolocation

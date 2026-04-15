@@ -6,19 +6,15 @@ Provides functions to inspect an :class:`~grdk.widgets._signals.ImageStack`
 and determine its polarimetric collection mode, extract per-polarization
 channel arrays, and validate completeness for quad-pol workflows.
 
-Two loading patterns are supported:
+Both BIOMASS and NISAR stacks are handled through a unified CYX single-reader
+path.  NISAR files are opened with ``polarizations='all'`` by
+:func:`~grdk.widgets.geodev.ow_image_loader._try_open_readers`, which causes
+the reader to return a ``(C, rows, cols)`` cube from ``read_chip``/
+``read_full`` with all polarizations declared in
+``channel_metadata[i].polarization``.
 
-**BIOMASS / multi-band single reader**
-    ``BIOMASSL1Reader`` exposes all four polarizations in a single
-    ``read_full()`` call as a ``(4, rows, cols)`` CYX complex array.
-    Channel order is declared via ``metadata.channel_metadata[i].polarization``.
-
-**NISAR / multi-reader per polarization**
-    ``NISARReader`` exposes one polarization per reader instance.  A quad-pol
-    ``ImageStack`` therefore holds four readers whose ``metadata.polarization``
-    strings are ``'HH'``, ``'HV'``, ``'VH'``, and ``'VV'`` respectively.
-
-``extract_quad_pol_arrays()`` handles both patterns transparently.
+``extract_quad_pol_arrays_strided()`` handles both reader types transparently
+via ``channel_metadata``.
 
 Author
 ------
@@ -222,26 +218,18 @@ def is_quad_pol(stack: ImageStack) -> bool:
     return get_polarimetric_mode(stack) == PolarimetricMode.QUAD_POL
 
 
-def extract_quad_pol_arrays(
-    stack: ImageStack,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Read and return ``(shh, shv, svh, svv)`` at full resolution.
-
-    For large images that would exceed available RAM, use
-    :func:`extract_quad_pol_arrays_strided` which reads stripe-by-stripe.
-    """
-    return _extract_quad_pol_arrays_impl(stack, stride=1)
-
-
 def extract_quad_pol_arrays_strided(
     stack: ImageStack,
     max_pixels: int,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Read and return ``(shh, shv, svh, svv)`` downsampled to *max_pixels*.
 
-    Reads each polarization channel stripe-by-stripe via ``read_chip``
-    so that full-resolution data is never materialised in memory.  The
-    output arrays have shape ``(ceil(rows/stride), ceil(cols/stride))``.
+    Uses a center-crop chip read so that full-resolution data is never
+    materialised in memory.  The output arrays have shape
+    ``(ceil(rows/stride), ceil(cols/stride))``.
+
+    Requires a single CYX multi-band reader in the stack (BIOMASS or
+    NISAR opened with ``polarizations='all'``).
 
     Parameters
     ----------
@@ -262,7 +250,6 @@ def extract_quad_pol_arrays_strided(
     if max_pixels <= 0:
         return _extract_quad_pol_arrays_impl(stack, stride=1)
 
-    # Determine native dimensions from the first readable reader
     rows, cols = _native_dims(stack)
     if rows is None or cols is None:
         return _extract_quad_pol_arrays_impl(stack, stride=1)
@@ -286,76 +273,64 @@ def _native_dims(stack: ImageStack):
     return None, None
 
 
-def _read_channel_strided(reader, stride: int) -> np.ndarray:
-    """Read a single-band reader downsampled by *stride*.
+def _read_cyx_chip(reader, stride: int) -> np.ndarray:
+    """Read a CYX cube from *reader*, downsampled by *stride* via center crop.
 
-    For stride > 1, reads a **center crop** of size
-    ``(ceil(rows/stride), ceil(cols/stride))`` rather than striding
-    over the full image.  This is O(output pixels) rather than
-    O(full image), making it practical on large NFS-stored HDF5 files
-    where reading even every 4th row forces a full file scan.
+    For ``stride > 1``, reads a chip of shape
+    ``(C, ceil(rows/stride), ceil(cols/stride))`` using ``read_chip``.
+    This is O(output pixels) and avoids loading the full image into memory
+    — critical for large NISAR scenes (e.g. 54 720 × 26 610 pixels,
+    4 polarizations, ~47 GB at full resolution).
 
-    The crop is centered in the scene so representative content is shown.
+    For ``stride == 1``, calls ``read_full()``.
     """
     if stride <= 1:
-        arr = reader.read_full()
-        if arr.ndim == 3 and arr.shape[0] == 1:
-            return arr[0]
-        if arr.ndim == 3 and arr.shape[-1] == 1:
-            return arr[..., 0]
-        return arr
+        cube = reader.read_full()
+    else:
+        meta = getattr(reader, 'metadata', None)
+        rows = int(getattr(meta, 'rows', 0) or 0)
+        cols = int(getattr(meta, 'cols', 0) or 0)
+        if rows and cols:
+            out_h = -(-rows // stride)   # ceil(rows / stride)
+            out_w = -(-cols // stride)   # ceil(cols / stride)
+            r0 = max(0, (rows - out_h) // 2)
+            c0 = max(0, (cols - out_w) // 2)
+            r1 = min(rows, r0 + out_h)
+            c1 = min(cols, c0 + out_w)
+            cube = reader.read_chip(r0, r1, c0, c1)
+        else:
+            cube = reader.read_full()
 
-    meta = getattr(reader, 'metadata', None)
-    rows = int(getattr(meta, 'rows', 0))
-    cols = int(getattr(meta, 'cols', 0))
+    # Normalise to CYX.  Trust axis_order from metadata — grdl CYX readers
+    # (NISAR polarizations='all', BIOMASS) explicitly set axis_order='CYX'.
+    # Only transpose to CYX when axis_order explicitly says 'YXC'.
+    if cube.ndim == 3:
+        axis_order = getattr(
+            getattr(reader, 'metadata', None), 'axis_order', None
+        )
+        if axis_order == 'YXC':
+            cube = np.moveaxis(cube, -1, 0)  # YXC → CYX
 
-    if not (rows and cols):
-        arr = reader.read_full()
-        if arr.ndim == 2:
-            return arr[::stride, ::stride]
-        return arr[:, ::stride, ::stride]
-
-    out_h = -(-rows // stride)   # ceil(rows/stride)
-    out_w = -(-cols // stride)   # ceil(cols/stride)
-
-    # Center the crop
-    r0 = max(0, (rows - out_h) // 2)
-    c0 = max(0, (cols - out_w) // 2)
-    r1 = min(rows, r0 + out_h)
-    c1 = min(cols, c0 + out_w)
-
-    chip = reader.read_chip(r0, r1, c0, c1)
-
-    if chip.ndim == 3 and chip.shape[0] == 1:
-        chip = chip[0]
-    elif chip.ndim == 3 and chip.shape[-1] == 1:
-        chip = chip[..., 0]
-    return chip
+    return cube
 
 
 def _extract_quad_pol_arrays_impl(
     stack: ImageStack,
     stride: int,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Internal implementation used by both public variants."""
+    """Extract HH, HV, VH, VV from a CYX multi-band reader.
+
+    Handles both BIOMASS (multi-band GeoTIFF) and NISAR (HDF5 opened
+    with ``polarizations='all'``).  For ``stride > 1``, reads a center-crop
+    chip via ``_read_cyx_chip`` to avoid loading full large images.
+    """
     if not stack or not stack.readers:
         raise ValueError("Stack is empty — no readers found.")
 
-    # Case 1: Multi-band single reader (BIOMASS)
     for reader in stack.readers:
         mb_mapping = _reader_quad_pol_channels(reader)
         if mb_mapping:
-            if stride <= 1:
-                cube = reader.read_full()  # (4, H, W) CYX complex
-            else:
-                # Read full then stride — BIOMASS tiffs are typically
-                # small enough that full-res fits; if not, stride in-place
-                cube = reader.read_full()
-                if cube.ndim == 3 and cube.shape[-1] == 4 and cube.shape[0] != 4:
-                    cube = np.moveaxis(cube, -1, 0)
-                cube = cube[:, ::stride, ::stride]
-            if cube.ndim == 3 and cube.shape[-1] == 4 and cube.shape[0] != 4:
-                cube = np.moveaxis(cube, -1, 0)
+            cube = _read_cyx_chip(reader, stride)
             return (
                 cube[mb_mapping['HH']],
                 cube[mb_mapping['HV']],
@@ -363,50 +338,8 @@ def _extract_quad_pol_arrays_impl(
                 cube[mb_mapping['VV']],
             )
 
-    # Case 2: Per-polarization readers (NISAR) — read each channel separately
-    pol_readers = extract_quad_pol_readers(stack)
-    shh = _read_channel_strided(pol_readers['HH'], stride)
-    shv = _read_channel_strided(pol_readers['HV'], stride)
-    svh = _read_channel_strided(pol_readers['VH'], stride)
-    svv = _read_channel_strided(pol_readers['VV'], stride)
-    return shh, shv, svh, svv
-
-
-def extract_quad_pol_readers(stack: ImageStack) -> Dict[str, object]:
-    """Return a ``{pol: reader}`` mapping for a per-pol multi-reader stack.
-
-    .. note::
-        For BIOMASS-style multi-band single-reader stacks, use
-        :func:`extract_quad_pol_arrays` instead.
-
-    Parameters
-    ----------
-    stack : ImageStack
-        A quad-pol ``ImageStack`` with one reader per polarization.
-
-    Returns
-    -------
-    Dict[str, ImageReader]
-        ``{'HH': reader, 'HV': reader, 'VH': reader, 'VV': reader}``.
-
-    Raises
-    ------
-    ValueError
-        If any quad-pol channel is absent.
-    """
-    mapping: Dict[str, object] = {}
-    for reader in stack.readers:
-        p = _reader_polarization(reader)
-        if p is not None and p in _QUAD_POL_CHANNELS:
-            mapping[p] = reader
-
-    missing = _QUAD_POL_CHANNELS - set(mapping.keys())
-    if missing:
-        present = sorted(mapping.keys()) or ['(none)']
-        raise ValueError(
-            f"Quad-pol stack is incomplete. "
-            f"Missing polarizations: {sorted(missing)}. "
-            f"Present: {present}."
-        )
-
-    return {pol: mapping[pol] for pol in ('HH', 'HV', 'VH', 'VV')}
+    raise ValueError(
+        "No quad-pol reader found in stack. "
+        "Expected a multi-band CYX reader (axis_order='CYX') with "
+        "HH, HV, VH, VV channels declared in channel_metadata."
+    )
