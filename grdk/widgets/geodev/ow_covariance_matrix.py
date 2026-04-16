@@ -70,7 +70,6 @@ from PyQt6.QtWidgets import (
 from grdk.widgets._signals import CovarianceMatrixSignal, ImageStack
 from grdk.widgets._pol_utils import (
     extract_quad_pol_arrays_strided,
-    get_polarimetric_mode,
     is_quad_pol,
     _native_dims,
     _reader_polarization,
@@ -389,8 +388,9 @@ class OWCovarianceMatrix(OWBaseWidget):
     # ------------------------------------------------------------------
 
     def _update_status_label(self, stack: ImageStack) -> None:
-        pol_mode = get_polarimetric_mode(stack)
-        pols = set()
+        from grdl.vocabulary import PolarimetricMode
+        pols: set = set()
+        mode = None
         for reader in stack.readers:
             mb = _reader_quad_pol_channels(reader)
             if mb:
@@ -399,11 +399,9 @@ class OWCovarianceMatrix(OWBaseWidget):
                 p = _reader_polarization(reader)
                 if p:
                     pols.add(p)
-
-        mode_str = (
-            pol_mode.value.replace('_', '-').upper()
-            if pol_mode else 'unknown'
-        )
+            if mode is None:
+                mode = PolarimetricMode.from_reader(reader)
+        mode_str = mode.value.replace('_', '-').upper() if mode else 'unknown'
         channels_str = ', '.join(sorted(pols)) if pols else '(none found)'
         self._status_label.setText(
             f"Mode: {mode_str}\nChannels: {channels_str}"

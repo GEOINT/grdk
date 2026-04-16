@@ -134,46 +134,57 @@ if _QT_AVAILABLE:
 
         _MAX_PIXELS: int = 20_000_000
 
-        def __init__(self, readers: list, parent=None) -> None:
+        def __init__(self, reader, parent=None) -> None:
             super().__init__(parent)
-            self._readers = readers
+            self._reader = reader
 
         def run(self) -> None:
             try:
-                import numpy as np  # noqa: F401
-                from grdk.widgets._signals import ImageStack
-                from grdk.widgets._pol_utils import get_polarimetric_mode
                 from grdl.vocabulary import PolarimetricMode
+                from grdl.image_processing.decomposition import (
+                    PauliDecomposition,
+                    DualPolHAlpha,
+                )
+                from grdk.widgets._pol_utils import (
+                    channel_pol_map,
+                    read_cyx_with_stride,
+                    split_copol_crosspol,
+                )
 
-                stack = ImageStack(readers=self._readers)
-                mode = get_polarimetric_mode(stack)
+                reader = self._reader
+                mode = PolarimetricMode.from_reader(reader)
                 _log.info("_PauliDecompWorker: detected mode=%s", mode)
 
+                pol_map = channel_pol_map(reader)
+                cube = read_cyx_with_stride(reader, self._MAX_PIXELS)
+
                 if mode == PolarimetricMode.QUAD_POL:
-                    rgb = self._quad_pol(stack)
                     label = "Pauli Decomposition (quad-pol)"
-                elif mode == PolarimetricMode.DUAL_POL:
-                    rgb = self._dual_pol(stack)
-                    label = "H/Alpha Decomposition (dual-pol)"
-                else:
-                    from grdk.widgets._pol_utils import (
-                        _reader_polarization,
-                        _reader_quad_pol_channels,
+                    self.progress.emit(
+                        "Detected quad-pol \u2014 computing Pauli decomposition\u2026"
                     )
-                    found: set = set()
-                    for r in self._readers:
-                        mb = _reader_quad_pol_channels(r)
-                        if mb:
-                            found.update(mb.keys())
-                        else:
-                            p = _reader_polarization(r)
-                            if p:
-                                found.add(p)
+                    decomp = PauliDecomposition()
+                    components = decomp.decompose(
+                        cube[pol_map['HH']],
+                        cube[pol_map['HV']],
+                        cube[pol_map['VH']],
+                        cube[pol_map['VV']],
+                    )
+                    rgb, _ = decomp.to_rgb(components)
+                elif mode == PolarimetricMode.DUAL_POL:
+                    label = "H/Alpha Decomposition (dual-pol)"
+                    self.progress.emit(
+                        "Detected dual-pol \u2014 computing H/Alpha decomposition\u2026"
+                    )
+                    s_co, s_cross = split_copol_crosspol(pol_map, cube)
+                    decomp = DualPolHAlpha()
+                    components = decomp.decompose_dual(s_co, s_cross)
+                    rgb, _ = decomp.to_rgb(components)
+                else:
                     raise ValueError(
                         "Requires quad-pol (HH/HV/VH/VV) or a recognised "
                         "dual-pol pair.\n"
-                        f"Available channels: "
-                        f"{sorted(found) or '(none detected)'}"
+                        f"Detected mode: {mode}"
                     )
 
                 self.finished.emit(rgb, label)
@@ -182,81 +193,6 @@ if _QT_AVAILABLE:
                     "_PauliDecompWorker error: %s", exc, exc_info=True,
                 )
                 self.error.emit(str(exc))
-
-        # --- Quad-pol: T3 \u2192 Pauli RGB ---
-
-        def _quad_pol(self, stack) -> 'np.ndarray':
-            import numpy as np
-            from grdk.widgets._pol_utils import extract_quad_pol_arrays_strided
-            from grdl.image_processing.decomposition.pol_matrix import (
-                CoherencyMatrix,
-            )
-
-            self.progress.emit(
-                "Reading quad-pol channels (HH, HV, VH, VV)\u2026"
-            )
-            shh, shv, svh, svv = extract_quad_pol_arrays_strided(
-                stack, max_pixels=self._MAX_PIXELS,
-            )
-            self.progress.emit(
-                f"Computing T3 coherency matrix "
-                f"({shh.shape[0]}\u00d7{shh.shape[1]})\u2026"
-            )
-            T3 = CoherencyMatrix(window_size=5).compute(shh, shv, svh, svv)
-            self.progress.emit(
-                "Compositing Pauli RGB "
-                "(R=double-bounce, G=volume, B=surface)\u2026"
-            )
-            r = self._stretch(self._to_db(T3[1, 1].real))
-            g = self._stretch(self._to_db(T3[2, 2].real))
-            b = self._stretch(self._to_db(T3[0, 0].real))
-            return np.stack([r, g, b], axis=0)
-
-        # --- Dual-pol: H/Alpha \u2192 Span / Entropy / Alpha RGB ---
-
-        def _dual_pol(self, stack) -> 'np.ndarray':
-            from grdk.widgets._pol_utils import extract_dual_pol_arrays_strided
-            from grdl.image_processing.decomposition.dual_pol_halpha import (
-                DualPolHAlpha,
-            )
-
-            self.progress.emit("Reading dual-pol channels\u2026")
-            s_co, s_cross = extract_dual_pol_arrays_strided(
-                stack, max_pixels=self._MAX_PIXELS,
-            )
-            self.progress.emit(
-                f"Computing H/Alpha decomposition "
-                f"({s_co.shape[0]}\u00d7{s_co.shape[1]})\u2026"
-            )
-            halpha = DualPolHAlpha()
-            components = halpha.decompose_dual(s_co, s_cross)
-            self.progress.emit(
-                "Compositing H/Alpha RGB "
-                "(R=span, G=entropy, B=\u03b1/90)\u2026"
-            )
-            rgb, _ = halpha.to_rgb(components)
-            return rgb
-
-        # --- Helpers ---
-
-        @staticmethod
-        def _to_db(power: 'np.ndarray') -> 'np.ndarray':
-            import numpy as np
-            floor = np.finfo(np.float32).tiny
-            return 10.0 * np.log10(
-                np.maximum(power.astype(np.float32), floor)
-            )
-
-        @staticmethod
-        def _stretch(data: 'np.ndarray') -> 'np.ndarray':
-            import numpy as np
-            v_lo = float(np.nanpercentile(data, 2.0))
-            v_hi = float(np.nanpercentile(data, 98.0))
-            if v_hi > v_lo:
-                out = (data - v_lo) / (v_hi - v_lo)
-            else:
-                out = np.zeros_like(data, dtype=np.float32)
-            return np.clip(out, 0.0, 1.0).astype(np.float32)
 
     # -----------------------------------------------------------------------
 
@@ -1521,6 +1457,7 @@ if _QT_AVAILABLE:
 
         def _is_pol_capable(self) -> bool:
             """Return True when a multi-pol SAR image is loaded."""
+            from grdl.vocabulary import PolarimetricMode
             for v in (
                 self._viewer.left_viewer,
                 self._viewer.right_viewer,
@@ -1528,32 +1465,27 @@ if _QT_AVAILABLE:
                 reader = v._reader
                 if reader is None:
                     continue
-                # BIOMASS: already holds all pols in one multi-band reader
-                try:
-                    from grdl.IO.sar.biomass import BIOMASSL1Reader
-                    if isinstance(reader, BIOMASSL1Reader):
-                        pols = getattr(reader, 'polarizations', ())
-                        if len(pols) >= 2:
-                            return True
-                except ImportError:
-                    pass
-                # NISAR (and others): check for \u22652 available polarizations
-                pols = self._get_available_polarizations(reader)
-                if pols is not None and len(pols) >= 2:
+                mode = PolarimetricMode.from_reader(reader)
+                if mode in (PolarimetricMode.QUAD_POL, PolarimetricMode.DUAL_POL):
+                    return True
+                if self._get_available_polarizations(reader) is not None:
                     return True
             return False
 
         def _gather_fullpol_reader(self) -> tuple:
-            """Return ``(readers, owns_readers, geolocation)`` for decomp.
+            """Return ``(reader, owns_reader, geolocation)`` for decomp.
 
             For NISAR: re-opens the file with ``polarizations='all'`` so
-            that all polarizations are available in a single CYX reader.
+            that all polarizations are available in a single CYX reader
+            (the viewer holds one-pol-per-pane readers for display).
             For BIOMASS: reuses the existing multi-band reader (caller must
             NOT close it).
 
             Returns
             -------
-            tuple of (list, bool, geolocation)
+            tuple of (reader or None, bool, geolocation or None)
+                *owns_reader* is True when the caller is responsible for
+                closing the reader after use.
             """
             pane = self._viewer.active_pane
             viewer = (
@@ -1572,13 +1504,13 @@ if _QT_AVAILABLE:
                 geo = other._geolocation
 
             if reader is None:
-                return [], False, None
+                return None, False, None
 
-            # BIOMASS: already has all pols \u2014 share, do not close
+            # BIOMASS: already has all pols — share, do not close
             try:
                 from grdl.IO.sar.biomass import BIOMASSL1Reader
                 if isinstance(reader, BIOMASSL1Reader):
-                    return [reader], False, geo
+                    return reader, False, geo
             except ImportError:
                 pass
 
@@ -1594,22 +1526,13 @@ if _QT_AVAILABLE:
                     all_reader = NISARReader(filepath, **kwargs)
                     from grdk.viewers.geo_viewer import create_geolocation
                     all_geo = create_geolocation(all_reader) or geo
-                    return [all_reader], True, all_geo
+                    return all_reader, True, all_geo
             except Exception as e:
                 _log.warning(
                     "Could not re-open NISAR with all polarizations: %s", e,
                 )
 
-            # Fallback: pass both pane readers as a multi-reader stack
-            readers = [
-                v._reader
-                for v in (
-                    self._viewer.left_viewer,
-                    self._viewer.right_viewer,
-                )
-                if v._reader is not None
-            ]
-            return readers, False, geo
+            return reader, False, geo
 
         def _on_pauli_decomp(self) -> None:
             """Handle Tools > Pauli Decomposition."""
@@ -1624,8 +1547,8 @@ if _QT_AVAILABLE:
                 )
                 return
 
-            readers, owns, geo = self._gather_fullpol_reader()
-            if not readers:
+            reader, owns, geo = self._gather_fullpol_reader()
+            if reader is None:
                 QMessageBox.critical(
                     self,
                     "Pauli Decomposition",
@@ -1634,11 +1557,11 @@ if _QT_AVAILABLE:
                 )
                 return
 
-            self._pauli_readers_to_close = readers if owns else []
+            self._pauli_readers_to_close = [reader] if owns else []
             self._pauli_geo = geo
             self._pauli_pane = self._viewer.active_pane
 
-            self._pauli_worker = _PauliDecompWorker(readers, parent=self)
+            self._pauli_worker = _PauliDecompWorker(reader, parent=self)
             self._pauli_worker.progress.connect(
                 lambda msg: self.statusBar().showMessage(msg),
             )
