@@ -154,6 +154,38 @@ def _reader_quad_pol_channels(reader) -> Optional[Dict[str, int]]:
     return None
 
 
+def _reader_all_channel_pols(reader) -> Optional[Dict[str, int]]:
+    """Return ``{pol: band_index}`` for *every* polarization channel in *reader*.
+
+    Unlike :func:`_reader_quad_pol_channels`, this works for dual-pol
+    (2-channel) CYX readers as well as full quad-pol (4-channel) readers.
+    Returns ``None`` when the reader is single-channel or carries no
+    polarization metadata.
+    """
+    meta = getattr(reader, 'metadata', None)
+
+    channel_metadata = getattr(meta, 'channel_metadata', None)
+    if channel_metadata:
+        mapping: Dict[str, int] = {}
+        for ch in channel_metadata:
+            pol = getattr(ch, 'polarization', None)
+            if isinstance(pol, str) and pol.strip():
+                mapping[pol.strip().upper()] = int(ch.index)
+        if len(mapping) >= 2:
+            return mapping
+
+    pol_list = getattr(meta, 'polarizations', None)
+    if pol_list:
+        pols_upper = [
+            p.strip().upper() for p in pol_list
+            if isinstance(p, str) and p.strip()
+        ]
+        if len(pols_upper) >= 2:
+            return {p: i for i, p in enumerate(pols_upper)}
+
+    return None
+
+
 def get_polarimetric_mode(stack: ImageStack) -> Optional[PolarimetricMode]:
     """Determine the :class:`~grdl.vocabulary.PolarimetricMode` of an
     :class:`~grdk.widgets._signals.ImageStack`.
@@ -182,15 +214,20 @@ def get_polarimetric_mode(stack: ImageStack) -> Optional[PolarimetricMode]:
 
     pols: Set[str] = set()
     for reader in stack.readers:
-        # Multi-band reader (BIOMASS): contributes all its polarizations
+        # Full quad-pol multi-band reader (BIOMASS, quad-pol NISAR)
         mb_mapping = _reader_quad_pol_channels(reader)
         if mb_mapping:
             pols.update(mb_mapping.keys())
         else:
-            # Single-band reader (NISAR): contributes its one polarization
-            p = _reader_polarization(reader)
-            if p is not None:
-                pols.add(p)
+            # Dual-pol multi-band reader (2-channel CYX NISAR)
+            all_mapping = _reader_all_channel_pols(reader)
+            if all_mapping:
+                pols.update(all_mapping.keys())
+            else:
+                # Single-band reader: contributes its one polarization
+                p = _reader_polarization(reader)
+                if p is not None:
+                    pols.add(p)
 
     if not pols:
         return None
@@ -216,6 +253,142 @@ def is_quad_pol(stack: ImageStack) -> bool:
     bool
     """
     return get_polarimetric_mode(stack) == PolarimetricMode.QUAD_POL
+
+
+def _split_copol_crosspol(
+    pol_arrays: Dict[str, 'np.ndarray'],
+) -> Tuple['np.ndarray', 'np.ndarray']:
+    """Split a 2-polarization dict into ``(co_pol, cross_pol)`` arrays.
+
+    Co-pol channels are same-character pairs (HH, VV); cross-pol are
+    mixed-character pairs (HV, VH).  When both channels share the same
+    type (both co-pol or both cross-pol), the two arrays are returned in
+    alphabetical polarization order.
+
+    Parameters
+    ----------
+    pol_arrays : dict
+        Maps polarization string \u2192 2-D complex array.  Must have
+        exactly 2 entries.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        ``(co_pol, cross_pol)``.
+    """
+    pol_names = list(pol_arrays.keys())
+    if len(pol_names) != 2:
+        raise ValueError(
+            f"Expected exactly 2 polarization channels, got {pol_names}"
+        )
+
+    def _is_like(p: str) -> bool:
+        return len(p) == 2 and p[0] == p[1]
+
+    like = [p for p in pol_names if _is_like(p)]
+    cross = [p for p in pol_names if not _is_like(p)]
+
+    if len(like) == 1 and len(cross) == 1:
+        return pol_arrays[like[0]], pol_arrays[cross[0]]
+    # Ambiguous (both co-pol or both cross-pol): sort alphabetically
+    pol_names.sort()
+    return pol_arrays[pol_names[0]], pol_arrays[pol_names[1]]
+
+
+def extract_dual_pol_arrays_strided(
+    stack: ImageStack,
+    max_pixels: int,
+) -> Tuple['np.ndarray', 'np.ndarray']:
+    """Read and return ``(s_co, s_cross)`` from a dual-pol *stack*.
+
+    Automatically determines which channel is co-pol and which is
+    cross-pol from the reader's ``channel_metadata`` polarization tags.
+
+    Parameters
+    ----------
+    stack : ImageStack
+        A dual-pol image stack (exactly 2 polarization channels).
+    max_pixels : int
+        Maximum pixels per channel.  Pass ``0`` for full resolution.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        ``(s_co, s_cross)`` complex 2-D arrays.
+    """
+    import math
+
+    if not stack or not stack.readers:
+        raise ValueError("Stack is empty \u2014 no readers found.")
+
+    reader = stack.readers[0]
+    all_mapping = _reader_all_channel_pols(reader)
+
+    if all_mapping and len(all_mapping) >= 2:
+        # CYX single multi-band reader (NISAR opened with polarizations='all')
+        rows, cols = _native_dims(stack)
+        if rows is None or cols is None:
+            stride = 1
+        elif max_pixels > 0 and rows * cols > max_pixels:
+            stride = math.ceil(math.sqrt(rows * cols / max_pixels))
+        else:
+            stride = 1
+
+        cube = _read_cyx_chip(reader, stride)  # (C, H\u2019, W\u2019)
+        pol_arrays: Dict[str, np.ndarray] = {}
+        for pol, idx in all_mapping.items():
+            if idx < cube.shape[0]:
+                pol_arrays[pol] = cube[idx]
+
+        if len(pol_arrays) < 2:
+            raise ValueError(
+                f"Only {len(pol_arrays)} channel(s) readable; need 2."
+            )
+        # Keep only 2 channels (trim extra pols from a quad-pol cube)
+        if len(pol_arrays) > 2:
+            pol_arrays = dict(
+                list(sorted(pol_arrays.items()))[:2]
+            )
+        return _split_copol_crosspol(pol_arrays)
+
+    # Fallback: two separate single-pol readers
+    if len(stack.readers) >= 2:
+        shape_r: Optional[Tuple[int, int]] = None
+        stride = 1
+        pol_arrays_fb: Dict[str, np.ndarray] = {}
+        for r in stack.readers[:2]:
+            p = _reader_polarization(r)
+            if p is None:
+                continue
+            if shape_r is None:
+                meta = getattr(r, 'metadata', None)
+                rows_r = int(getattr(meta, 'rows', 0) or 0)
+                cols_r = int(getattr(meta, 'cols', 0) or 0)
+                if rows_r and cols_r:
+                    shape_r = (rows_r, cols_r)
+                    total = rows_r * cols_r
+                    if max_pixels > 0 and total > max_pixels:
+                        stride = math.ceil(
+                            math.sqrt(total / max_pixels)
+                        )
+            if shape_r is None:
+                continue
+            rows_r, cols_r = shape_r
+            data = r.read_chip(0, rows_r, 0, cols_r)
+            if stride > 1:
+                data = data[..., ::stride, ::stride]
+            if data.ndim == 3:
+                data = data[0]
+            pol_arrays_fb[p] = data
+
+        if len(pol_arrays_fb) == 2:
+            return _split_copol_crosspol(pol_arrays_fb)
+
+    raise ValueError(
+        "Could not find 2 polarization channels for dual-pol decomposition. "
+        "Expected a CYX multi-band reader with 2 channels declared in "
+        "channel_metadata, or 2 separate single-pol readers in the stack."
+    )
 
 
 def extract_quad_pol_arrays_strided(
