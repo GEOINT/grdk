@@ -155,12 +155,22 @@ def _reader_polarization(reader) -> Optional[str]:
     Optional[str]
         Uppercase polarization string (e.g. ``'HH'``) or ``None``.
     """
+    meta = getattr(reader, 'metadata', None)
+
     # NISAR / CPHD / sensor-specific: metadata.polarization is a plain string
-    pol = getattr(getattr(reader, 'metadata', None), 'polarization', None)
+    pol = getattr(meta, 'polarization', None)
     if isinstance(pol, str) and pol:
         return pol.upper()
 
-    meta = getattr(reader, 'metadata', None)
+    # Sentinel-1 SLC: polarization stored inside swath_info sub-object
+    swath_info = (
+        meta.get('swath_info') if hasattr(meta, 'get')
+        else getattr(meta, 'swath_info', None)
+    )
+    if swath_info is not None:
+        p = getattr(swath_info, 'polarization', None)
+        if isinstance(p, str) and p.strip():
+            return p.strip().upper()
 
     # Generic multi-band readers: first ChannelMetadata with a polarization
     channel_metadata = getattr(meta, 'channel_metadata', None)
@@ -177,6 +187,12 @@ def _reader_polarization(reader) -> Optional[str]:
         for p in pol_list:
             if isinstance(p, str) and p.strip():
                 return p.strip().upper()
+
+    # TerraSAR-X: polarization stored as a semi-private reader attribute
+    # (no public metadata property for the currently-loaded channel).
+    p = getattr(reader, '_requested_polarization', None)
+    if isinstance(p, str) and p.strip():
+        return p.strip().upper()
 
     return None
 

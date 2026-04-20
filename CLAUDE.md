@@ -152,15 +152,81 @@ Follow GRDL's development standards (see `../grdl/CLAUDE.md`):
 
 ### Additional GRDK Standards
 
-- **Execution and catalog logic lives in grdl-runtime** — GRDK widgets import from `grdl_rt.execution` and `grdl_rt.catalog`, not from local `grdk/core/` or `grdk/catalog/` directories (these do not exist).
-- **Qt imports use PyQt6 directly** — do not use AnyQt or PyQt5. Import from `PyQt6.QtWidgets`, `PyQt6.QtCore`, `PyQt6.QtGui`. Use `from PyQt6.QtCore import pyqtSignal as Signal` for signal declarations.
+- **Execution and catalog logic lives in grdl-runtime** — GRDK widgets import from
+  `grdl_rt.execution` and `grdl_rt.catalog`. The `grdk/core/` and `grdk/catalog/`
+  directories do not exist and must not be recreated.
+- **Qt imports use PyQt6 directly** — do not use AnyQt or PyQt5. Import from
+  `PyQt6.QtWidgets`, `PyQt6.QtCore`, `PyQt6.QtGui`. Use
+  `from PyQt6.QtCore import pyqtSignal as Signal` for signal declarations.
 - **Orange widgets** follow the `ow_<name>.py` naming convention.
 - **Signal types** are defined in `_signals.py` and wrap core models.
 - **Tests** use pytest, synthetic data, no real imagery files.
-- **Image display** goes through ImageCanvas — never create standalone QLabel+QPixmap thumbnail code.
-- **Display enhancements** are pure functions — `normalize_array()` doesn't modify source data.
-- **Viewers are standalone Qt widgets** — no Orange dependency. They can be embedded in any Qt app.
-- **Remote GUI support** — GUI must work over X11 forwarding. Avoid OpenGL-dependent rendering; use `QT_QPA_PLATFORM=xcb` and `QT_QUICK_BACKEND=software` for container compatibility.
+- **Image display** goes through ImageCanvas — never create standalone
+  `QLabel+QPixmap` thumbnail code.
+- **Display enhancements** are pure functions — `normalize_array()` doesn't modify
+  source data.
+- **Viewers are standalone Qt widgets** — no Orange dependency. They can be embedded
+  in any Qt app.
+- **Remote GUI support** — GUI must work over X11 forwarding. Avoid OpenGL-dependent
+  rendering; use `QT_QPA_PLATFORM=xcb` and `QT_QUICK_BACKEND=software` for container
+  compatibility.
+
+### Polarization Handling Pattern
+
+**Single canonical function** for extracting the primary polarization from any reader:
+
+```python
+from grdk.widgets._pol_utils import _reader_polarization
+pol = _reader_polarization(reader)  # returns e.g. 'HH' or None
+```
+
+This covers: Sentinel-1 SLC (`swath_info.polarization`), TerraSAR-X
+(`_requested_polarization` fallback), NISAR / CPHD (`metadata.polarization`),
+generic multi-band (`channel_metadata`), BIOMASS (`metadata.polarizations`).
+
+**Never** access `reader._requested_polarization` directly or add new sensor-specific
+`isinstance` checks in viewer or widget code.
+
+To get all channels from a multi-band CYX reader (BIOMASS, NISAR all-pol):
+
+```python
+from grdk.widgets._pol_utils import channel_pol_map
+pol_map = channel_pol_map(reader)  # {pol: band_index}
+```
+
+To check SAR/polarimetric capability without isinstance chains:
+
+```python
+from grdl.vocabulary import PolarimetricMode
+mode = PolarimetricMode.from_reader(reader)
+```
+
+### Geolocation Dispatch Pattern
+
+`create_geolocation()` in `geo_viewer.py` uses a declarative `_GEO_REGISTRY` list
+of `(reader_module, reader_class, factory)` tuples.
+
+To add geolocation support for a new sensor, append one entry to `_GEO_REGISTRY`:
+
+```python
+_GEO_REGISTRY.append(
+    ('grdl.IO.sar.myformat', 'MySARReader',
+     lambda r: _load_geo('grdl.geolocation.sar.myformat', 'MySARGeolocation', r))
+)
+```
+
+**Never** add another `try/except isinstance` block to `create_geolocation()`.
+
+### Pauli Decomposition State
+
+`ViewerMainWindow` tracks per-pane decomposition state in `_decomp_state`
+(`{0: None|'pauli'|'halpha', 1: ...}`). Rules:
+
+- Reset to `None` on every `open_file`, `open_reader`, `set_array` call.
+- Set to `'pauli'` or `'halpha'` in `_on_pauli_finished()` **after** display.
+- `_on_pauli_decomp()` checks state and prompts before re-running on an already-decomposed pane.
+- `_on_pauli_finished()` displays the result before calling `_on_pauli_cleanup()`
+  so `_update_tools_state()` sees the final post-display reader=None state.
 
 ## Catalog Path Resolution
 

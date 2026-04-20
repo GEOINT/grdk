@@ -93,6 +93,11 @@ if _QT_AVAILABLE:
     from grdk.viewers.dual_viewer import DualGeoViewer
     from grdk.viewers.image_canvas import DisplaySettings
     from grdk.widgets._display_controls import build_display_controls
+    from grdk.widgets._pol_utils import (
+        _reader_polarization,
+        channel_pol_map,
+        read_cyx_with_stride,
+    )
 
     # File filter for the open dialog
     _IMAGE_FILTER = (
@@ -245,6 +250,11 @@ if _QT_AVAILABLE:
             self._pauli_geo: Optional[Any] = None
             self._pauli_pane: int = 0
 
+            # Per-pane decomposition state: None | 'pauli' | 'halpha'
+            # Tracks whether the displayed content is already a
+            # polarimetric decomposition so the tool can gate re-runs.
+            self._decomp_state: dict = {0: None, 1: None}
+
             # Wire signals
             self._viewer.band_info_changed.connect(
                 self._on_band_info_changed,
@@ -295,6 +305,7 @@ if _QT_AVAILABLE:
                 self.setWindowTitle(f"GRDK Viewer \u2014 {filepath}")
                 self._ortho_results.pop(pane, None)
                 self._rgb_result = None
+                self._decomp_state[pane] = None
                 self._update_metadata_table()
                 self._update_remap_state()
                 self._sync_display_controls(pane)
@@ -342,6 +353,7 @@ if _QT_AVAILABLE:
                     self.setWindowTitle("GRDK Viewer \u2014 [reader]")
                 self._ortho_results.pop(pane, None)
                 self._rgb_result = None
+                self._decomp_state[pane] = None
                 self._update_metadata_table()
                 self._update_remap_state()
                 self._sync_display_controls(pane)
@@ -440,6 +452,7 @@ if _QT_AVAILABLE:
                 self._update_remap_state()
                 self._update_tools_state()
                 self._pane_pol_names[pane] = None
+                self._decomp_state[pane] = None
                 self.statusBar().showMessage(
                     f"Displaying array: {arr.shape} {arr.dtype}"
                 )
@@ -860,7 +873,7 @@ if _QT_AVAILABLE:
                 Available polarization strings (e.g. ['VV', 'VH']).
             """
             # Determine which pol the left pane currently has
-            current_pol = self._get_reader_polarization(reader)
+            current_pol = _reader_polarization(reader)
             if current_pol and current_pol in pols:
                 # Offer the first OTHER polarization
                 other_pols = [p for p in pols if p != current_pol]
@@ -914,30 +927,6 @@ if _QT_AVAILABLE:
             self.statusBar().showMessage(
                 f"Dual view: {current_pol} | {second_pol}",
             )
-
-        @staticmethod
-        def _get_reader_polarization(reader: Any) -> Optional[str]:
-            """Extract the current polarization from a SAR reader."""
-            # TerraSAR-X
-            pol = getattr(reader, '_requested_polarization', None)
-            if pol:
-                return pol
-            # Sentinel-1 SLC
-            meta = getattr(reader, 'metadata', None)
-            if meta is not None:
-                swath_info = (
-                    meta.get('swath_info')
-                    if hasattr(meta, 'get')
-                    else getattr(meta, 'swath_info', None)
-                )
-                if swath_info:
-                    return getattr(swath_info, 'polarization', None)
-            # Generic: metadata.polarization (NISAR, etc.)
-            if meta is not None:
-                p = getattr(meta, 'polarization', None)
-                if p:
-                    return p
-            return None
 
         @staticmethod
         def _create_reader_for_pol(
@@ -1234,52 +1223,48 @@ if _QT_AVAILABLE:
 
         @staticmethod
         def _update_remap_for_dock(dock: Any, reader: Any) -> None:
-            """Update remap enabled state for a display dock."""
+            """Enable the SAR remap selector only for SAR/complex-data readers.
+
+            Uses two heuristics in order, both of which avoid hardcoded
+            reader-class lists:
+
+            1. Complex dtype — any reader returning a complex floating
+               dtype is treated as SAR-like (SLC, SICD, CPHD, etc.).
+            2. PolarimetricMode — a recognised polarimetric mode
+               (QUAD_POL, DUAL_POL, COMPACT_POL) signals SAR even when
+               the data has already been detected (e.g. SIDD).
+            """
             controls = dock.widget()
             if not hasattr(controls, 'set_remap_enabled'):
                 return
             if reader is None:
                 controls.set_remap_enabled(False)
                 return
+
+            import numpy as np
+
+            # Heuristic 1: complex dtype → SLC / SICD / CPHD family
             is_sar = False
             try:
-                from grdl.IO.sar.sicd import SICDReader
-                if isinstance(reader, SICDReader):
+                dtype = reader.get_dtype()
+                if np.issubdtype(dtype, np.complexfloating):
                     is_sar = True
-            except ImportError:
+            except Exception:
                 pass
-            try:
-                from grdl.IO.sar.biomass import BIOMASSL1Reader
-                if isinstance(reader, BIOMASSL1Reader):
-                    is_sar = True
-            except ImportError:
-                pass
-            try:
-                from grdl.IO.sar.sentinel1_slc import Sentinel1SLCReader
-                if isinstance(reader, Sentinel1SLCReader):
-                    is_sar = True
-            except ImportError:
-                pass
-            try:
-                from grdl.IO.sar.sidd import SIDDReader
-                if isinstance(reader, SIDDReader):
-                    is_sar = True
-            except ImportError:
-                pass
-            try:
-                from grdl.IO.sar.nisar import NISARReader
-                if isinstance(reader, NISARReader):
-                    is_sar = True
-            except ImportError:
-                pass
-            if not is_sar and reader is not None:
+
+            # Heuristic 2: PolarimetricMode recognises the sensor as SAR
+            if not is_sar:
                 try:
-                    import numpy as np
-                    dtype = reader.get_dtype()
-                    if np.issubdtype(dtype, np.complexfloating):
+                    from grdl.vocabulary import PolarimetricMode
+                    mode = PolarimetricMode.from_reader(reader)
+                    if mode not in (
+                        PolarimetricMode.NONE,
+                        PolarimetricMode.UNKNOWN,
+                    ):
                         is_sar = True
                 except Exception:
                     pass
+
             controls.set_remap_enabled(is_sar)
 
         def _on_pol_swap_check(self, pane: int, settings: Any) -> None:
@@ -1309,29 +1294,11 @@ if _QT_AVAILABLE:
             if reader is None:
                 return
 
-            # Only handle Sentinel-1 SLC and TerraSAR-X
-            is_multipol_sar = False
-            try:
-                from grdl.IO.sar.sentinel1_slc import Sentinel1SLCReader
-                if isinstance(reader, Sentinel1SLCReader):
-                    is_multipol_sar = True
-            except ImportError:
-                pass
-            if not is_multipol_sar:
-                try:
-                    from grdl.IO.sar.terrasar import TerraSARReader
-                    if isinstance(reader, TerraSARReader):
-                        is_multipol_sar = True
-                except ImportError:
-                    pass
-            if not is_multipol_sar:
-                try:
-                    from grdl.IO.sar.nisar import NISARReader
-                    if isinstance(reader, NISARReader):
-                        is_multipol_sar = True
-                except ImportError:
-                    pass
-            if not is_multipol_sar:
+            # Only trigger swaps for readers that expose multiple pols via
+            # the public get_available_polarizations() API (Sentinel-1 SLC,
+            # TerraSAR-X, NISAR).  Readers that don't support this method
+            # (generic GeoTIFF, EO, etc.) are silently skipped.
+            if self._get_available_polarizations(reader) is None:
                 return
 
             # Check if selected band_index maps to a different pol
@@ -1344,7 +1311,7 @@ if _QT_AVAILABLE:
                 return
 
             target_pol = band_info[band_index].name
-            current_pol = self._get_reader_polarization(reader)
+            current_pol = _reader_polarization(reader)
             if target_pol == current_pol:
                 return  # Same pol, no swap needed
 
@@ -1411,13 +1378,21 @@ if _QT_AVAILABLE:
             if reader is None:
                 self._pane_pol_names[pane] = None
                 return
-            # BIOMASS: native multi-pol reader
+            # Multi-pol CYX reader (BIOMASS, NISAR with polarizations='all')
+            pol_map = channel_pol_map(reader)
+            if len(pol_map) >= 2:
+                # Preserve insertion order from sorted band indices
+                self._pane_pol_names[pane] = [
+                    p for p, _ in sorted(pol_map.items(), key=lambda kv: kv[1])
+                ]
+                return
+            # Fallback: BIOMASS legacy attribute
             pols = getattr(reader, 'polarizations', None)
             if pols and len(pols) >= 2:
                 self._pane_pol_names[pane] = list(pols)
                 return
-            # Single-pol SAR (TerraSAR-X, Sentinel-1)
-            pol = self._get_reader_polarization(reader)
+            # Single-pol SAR (TerraSAR-X, Sentinel-1, NISAR)
+            pol = _reader_polarization(reader)
             if pol:
                 self._pane_pol_names[pane] = [pol]
                 return
@@ -1547,6 +1522,23 @@ if _QT_AVAILABLE:
                 )
                 return
 
+            # Idempotency guard: the active pane already shows a
+            # decomposition result.  Ask the user whether to refresh
+            # (re-run on the raw data) or cancel.
+            active = self._viewer.active_pane
+            if self._decomp_state.get(active) is not None:
+                result = QMessageBox.question(
+                    self,
+                    "Pauli Decomposition",
+                    "The active pane already shows a decomposition result.\n\n"
+                    "Re-run the decomposition on the original raw data?",
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if result != QMessageBox.StandardButton.Yes:
+                    return
+
             reader, owns, geo = self._gather_fullpol_reader()
             if reader is None:
                 QMessageBox.critical(
@@ -1579,10 +1571,17 @@ if _QT_AVAILABLE:
         def _on_pauli_finished(self, rgb: Any, label: str) -> None:
             """Handle successful decomposition result."""
             QApplication.restoreOverrideCursor()
-            self._on_pauli_cleanup()
+            # Display first so _update_tools_state() inside _display_rgb_result()
+            # sees the final reader=None state when re-evaluating capabilities.
             self._display_rgb_result(
                 rgb, self._pauli_geo, self._pauli_pane, label,
             )
+            # Record that this pane now holds a decomposition result.
+            decomp_kind = (
+                'pauli' if 'quad' in label.lower() else 'halpha'
+            )
+            self._decomp_state[self._pauli_pane] = decomp_kind
+            self._on_pauli_cleanup()
 
         def _on_pauli_error(self, msg: str) -> None:
             """Handle decomposition error."""
@@ -1604,6 +1603,8 @@ if _QT_AVAILABLE:
                 except Exception:
                     pass
             self._pauli_readers_to_close = []
+            # Re-evaluate after display so the state reflects what is
+            # currently shown (reader may now be None after set_array).
             self._pauli_action.setEnabled(self._is_pol_capable())
 
         # --- RGB Combine ---
@@ -1629,15 +1630,21 @@ if _QT_AVAILABLE:
                 )
                 reader = viewer._reader
 
-                # Multi-band reader (BIOMASS)
-                pols = getattr(reader, 'polarizations', None)
-                if pols:
-                    names.update(pols)
-                elif reader is not None:
-                    # Single-pol reader (TerraSAR-X, Sentinel-1)
-                    pol = self._get_reader_polarization(reader)
-                    if pol:
-                        names.add(pol)
+                if reader is not None:
+                    # Multi-channel CYX reader (BIOMASS, NISAR all-pol)
+                    pol_map = channel_pol_map(reader)
+                    if pol_map:
+                        names.update(pol_map.keys())
+                    else:
+                        # Fallback: BIOMASS legacy attribute
+                        pols = getattr(reader, 'polarizations', None)
+                        if pols:
+                            names.update(pols)
+                        else:
+                            # Single-pol SAR (TerraSAR-X, Sentinel-1, NISAR)
+                            pol = _reader_polarization(reader)
+                            if pol:
+                                names.add(pol)
 
                 # Cached pol names (post-ortho arrays)
                 cached = self._pane_pol_names.get(pane_idx)
@@ -1680,8 +1687,26 @@ if _QT_AVAILABLE:
                 )
                 reader = viewer._reader
 
-                # --- Multi-band reader (BIOMASS) ---
-                pols = getattr(reader, 'polarizations', None)
+                # --- Multi-channel CYX reader (BIOMASS, NISAR all-pol) ---
+                # channel_pol_map() reads channel_metadata and is format-agnostic.
+                pol_map = channel_pol_map(reader) if reader is not None else {}
+                if len(pol_map) >= 2:
+                    _MAX_PX = 4_000_000
+                    cube = read_cyx_with_stride(reader, _MAX_PX)
+                    for pol_name, band_idx in pol_map.items():
+                        if pol_name not in band_data:
+                            arr = np.abs(cube[band_idx]).astype(np.float32)
+                            band_data[pol_name] = arr
+                            if min_rows is None:
+                                min_rows, min_cols = arr.shape
+                            else:
+                                min_rows = min(min_rows, arr.shape[0])
+                                min_cols = min(min_cols, arr.shape[1])
+                    del cube
+                    continue
+
+                # --- Fallback: BIOMASS legacy polarizations attribute ---
+                pols = getattr(reader, 'polarizations', None) if reader is not None else None
                 if pols and len(pols) >= 2:
                     shape = reader.get_shape()
                     rows, cols = shape[0], shape[1]
@@ -1700,9 +1725,9 @@ if _QT_AVAILABLE:
                                 min_cols = min(min_cols, arr.shape[1])
                     continue
 
-                # --- Single-pol reader (TerraSAR-X, Sentinel-1) ---
+                # --- Single-pol reader (TerraSAR-X, Sentinel-1, NISAR) ---
                 if reader is not None:
-                    pol_name = self._get_reader_polarization(reader)
+                    pol_name = _reader_polarization(reader)
                     if pol_name and pol_name not in band_data:
                         shape = reader.get_shape()
                         rows = shape[0]
@@ -1805,6 +1830,21 @@ if _QT_AVAILABLE:
             if 'HV' in band_data and 'VH' in band_data:
                 options.append('HV + VH')
 
+            # Default channel assignments:
+            # quad-pol → Pauli-like (R=double-bounce, G=volume, B=surface)
+            # otherwise → first three available options
+            is_quad = (
+                'HH' in band_data and 'VV' in band_data
+                and ('HV' in band_data or 'VH' in band_data)
+            )
+            if is_quad:
+                pauli_r = 'HH \u2212 VV'
+                pauli_g = 'HV + VH' if 'HV + VH' in options else band_names[min(1, len(band_names)-1)]
+                pauli_b = 'HH + VV'
+                defaults = [pauli_r, pauli_g, pauli_b]
+            else:
+                defaults = options[:3]
+
             # --- 3. Show channel selection dialog ---
             dlg = QDialog(self)
             dlg.setWindowTitle("Combine Bands to RGB")
@@ -1815,9 +1855,10 @@ if _QT_AVAILABLE:
             for i, color in enumerate(('Red', 'Green', 'Blue')):
                 combo = QComboBox()
                 combo.addItems(options)
-                # Set default selections to spread across options
-                if i < len(options):
-                    combo.setCurrentIndex(i)
+                # Set default: Pauli-like for quad-pol, spread for others
+                default = defaults[i] if i < len(defaults) else options[0]
+                idx = options.index(default) if default in options else min(i, len(options) - 1)
+                combo.setCurrentIndex(idx)
                 combos[color] = combo
                 form.addRow(f"{color}:", combo)
             layout.addLayout(form)
