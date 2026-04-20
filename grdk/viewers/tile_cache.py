@@ -494,7 +494,11 @@ if _QT_AVAILABLE:
                     if np.iscomplexobj(chip):
                         chip = np.abs(chip)
                     samples.append(chip.astype(np.float64).ravel())
-                except Exception:
+                except Exception as _exc:
+                    self._log.debug(
+                        "_sample_overview: read_chip(%d,%d,%d,%d) failed: %s",
+                        r0, r1, c0, c1, _exc, exc_info=True,
+                    )
                     continue
 
             if not samples:

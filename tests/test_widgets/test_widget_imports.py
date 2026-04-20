@@ -27,9 +27,11 @@ import pytest
 _GEODEV_WIDGETS = [
     "grdk.widgets.geodev.ow_chipper",
     "grdk.widgets.geodev.ow_coregister",
+    "grdk.widgets.geodev.ow_covariance_matrix",
     "grdk.widgets.geodev.ow_image_loader",
     "grdk.widgets.geodev.ow_labeler",
     "grdk.widgets.geodev.ow_orchestrator",
+    "grdk.widgets.geodev.ow_pauli_decomposer",
     "grdk.widgets.geodev.ow_preview",
     "grdk.widgets.geodev.ow_processor",
     "grdk.widgets.geodev.ow_project",

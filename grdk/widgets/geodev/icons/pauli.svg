@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Background circle -->
+  <circle cx="32" cy="32" r="30" fill="#1a1a2e" stroke="#4a90d9" stroke-width="2"/>
+
+  <!-- RGB triangle (Pauli components) -->
+  <!-- Red vertex: double-bounce (top) -->
+  <polygon points="32,8 54,48 10,48" fill="none" stroke="#888" stroke-width="1.5" stroke-linejoin="round"/>
+
+  <!-- Red channel region -->
+  <circle cx="32" cy="14" r="7" fill="#e74c3c" opacity="0.9"/>
+  <!-- Green channel region -->
+  <circle cx="52" cy="46" r="7" fill="#2ecc71" opacity="0.9"/>
+  <!-- Blue channel region -->
+  <circle cx="12" cy="46" r="7" fill="#3498db" opacity="0.9"/>
+
+  <!-- Center overlap indicator -->
+  <circle cx="32" cy="36" r="5" fill="white" opacity="0.6"/>
+</svg>

@@ -270,12 +270,61 @@ def open_any(filepath: Union[str, Path]) -> Any:
     )
 
 
+def _make_affine_geo(reader: Any) -> Optional[Any]:
+    """Create AffineGeolocation for readers that carry transform + CRS."""
+    transform = reader.metadata.get('transform')
+    crs = reader.metadata.get('crs')
+    if not (transform and crs):
+        return None
+    from grdl.geolocation import AffineGeolocation
+    return AffineGeolocation.from_reader(reader)
+
+
+def _make_biomass_geo(reader: Any) -> Optional[Any]:
+    """Create GCPGeolocation for BIOMASS readers."""
+    gcps = reader.metadata.get('gcps')
+    if not gcps:
+        return None
+    from grdl.geolocation import GCPGeolocation
+    return GCPGeolocation.from_dict(
+        {'gcps': gcps, 'crs': reader.metadata.get('crs', 'WGS84')},
+        reader.metadata,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Geolocation registry: (reader_module, reader_class, factory_callable)
+#
+# Entries are tried in order.  The first isinstance match wins.
+# Modules that are not installed are silently skipped (ImportError).
+# ---------------------------------------------------------------------------
+
+_GEO_REGISTRY: list = [
+    # SAR formats
+    ('grdl.IO.sar.sicd',        'SICDReader',       lambda r: _load_geo('grdl.geolocation', 'SICDGeolocation', r)),
+    ('grdl.IO.sar.sentinel1_slc', 'Sentinel1SLCReader', lambda r: _load_geo('grdl.geolocation', 'Sentinel1SLCGeolocation', r)),
+    ('grdl.IO.sar.nisar',       'NISARReader',       lambda r: _load_geo('grdl.geolocation.sar.nisar', 'NISARGeolocation', r)),
+    ('grdl.IO.sar.biomass',     'BIOMASSL1Reader',   _make_biomass_geo),
+    # Generic / EO formats (need transform + CRS in metadata)
+    ('grdl.IO.geotiff',         'GeoTIFFReader',     _make_affine_geo),
+    ('grdl.IO.nitf',            'NITFReader',        _make_affine_geo),
+]
+
+
+def _load_geo(geo_module: str, geo_class: str, reader: Any) -> Any:
+    """Import *geo_class* from *geo_module* and call ``.from_reader(reader)``."""
+    import importlib
+    mod = importlib.import_module(geo_module)
+    cls = getattr(mod, geo_class)
+    return cls.from_reader(reader)
+
+
 def create_geolocation(reader: Any) -> Optional[Any]:
     """Create the appropriate Geolocation from a reader type.
 
-    Dispatches by reader class to the matching grdl Geolocation
-    factory.  Returns None if geolocation cannot be determined
-    (the viewer will operate in pixel-only mode).
+    Consults :data:`_GEO_REGISTRY` in declaration order.  Returns the
+    first successful result, or ``None`` when no entry matches (the
+    viewer will operate in pixel-only mode).
 
     Parameters
     ----------
@@ -287,79 +336,33 @@ def create_geolocation(reader: Any) -> Optional[Any]:
     Optional[Geolocation]
         Geolocation instance, or None.
     """
+    import importlib
+
     _log.debug("create_geolocation: reader type = %s", type(reader).__name__)
 
-    # Lazy imports to avoid pulling in optional dependencies at module level
-    try:
-        from grdl.IO.sar.sicd import SICDReader
-        if isinstance(reader, SICDReader):
-            from grdl.geolocation import SICDGeolocation
-            geo = SICDGeolocation.from_reader(reader)
-            _log.info("create_geolocation: SICDGeolocation created")
-            return geo
-    except ImportError:
-        pass
+    for reader_module, reader_class, factory in _GEO_REGISTRY:
+        try:
+            mod = importlib.import_module(reader_module)
+            cls = getattr(mod, reader_class)
+        except (ImportError, AttributeError):
+            continue
 
-    try:
-        from grdl.IO.sar.sentinel1_slc import Sentinel1SLCReader
-        if isinstance(reader, Sentinel1SLCReader):
-            from grdl.geolocation import Sentinel1SLCGeolocation
-            geo = Sentinel1SLCGeolocation.from_reader(reader)
-            _log.info("create_geolocation: Sentinel1SLCGeolocation created")
-            return geo
-    except ImportError:
-        pass
+        if not isinstance(reader, cls):
+            continue
 
-    try:
-        from grdl.IO.sar.nisar import NISARReader
-        if isinstance(reader, NISARReader):
-            from grdl.geolocation.sar.nisar import NISARGeolocation
-            geo = NISARGeolocation.from_reader(reader)
-            _log.info("create_geolocation: NISARGeolocation created")
-            return geo
-    except ImportError:
-        pass
-
-    try:
-        from grdl.IO.sar.biomass import BIOMASSL1Reader
-        if isinstance(reader, BIOMASSL1Reader):
-            gcps = reader.metadata.get('gcps')
-            if gcps:
-                from grdl.geolocation import GCPGeolocation
-                geo = GCPGeolocation.from_dict(
-                    {'gcps': gcps, 'crs': reader.metadata.get('crs', 'WGS84')},
-                    reader.metadata,
+        try:
+            geo = factory(reader)
+            if geo is not None:
+                _log.info(
+                    "create_geolocation: %s via %s.%s",
+                    type(geo).__name__, reader_module, reader_class,
                 )
-                _log.info("create_geolocation: GCPGeolocation created (BIOMASS)")
                 return geo
-    except ImportError:
-        pass
-
-    try:
-        from grdl.IO.geotiff import GeoTIFFReader
-        if isinstance(reader, GeoTIFFReader):
-            transform = reader.metadata.get('transform')
-            crs = reader.metadata.get('crs')
-            if transform and crs:
-                from grdl.geolocation import AffineGeolocation
-                geo = AffineGeolocation.from_reader(reader)
-                _log.info("create_geolocation: AffineGeolocation created (GeoTIFF)")
-                return geo
-    except ImportError:
-        pass
-
-    try:
-        from grdl.IO.nitf import NITFReader
-        if isinstance(reader, NITFReader):
-            transform = reader.metadata.get('transform')
-            crs = reader.metadata.get('crs')
-            if transform and crs:
-                from grdl.geolocation import AffineGeolocation
-                geo = AffineGeolocation.from_reader(reader)
-                _log.info("create_geolocation: AffineGeolocation created (NITF)")
-                return geo
-    except ImportError:
-        pass
+        except Exception as e:
+            _log.warning(
+                "create_geolocation: factory failed for %s.%s: %s",
+                reader_module, reader_class, e,
+            )
 
     _log.info(
         "create_geolocation: no geolocation for %s (pixel-only mode)",

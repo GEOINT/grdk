@@ -34,8 +34,11 @@ Modified
 """
 
 # Standard library
+import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Third-party
 from orangewidget import gui
@@ -58,11 +61,11 @@ from grdk.widgets._signals import GrdkProjectSignal, ImageStack
 
 
 def _try_open_reader(filepath: str):
-    """Attempt to open an image using GRDL readers.
+    """Attempt to open a single image reader for *filepath*.
 
     Tries multiple reader strategies in order:
     1. GRDL open_sar() for SAR formats (SICD, CPHD, CRSD, SIDD, Sentinel-1)
-    2. GRDL BIOMASSL1Reader for BIOMASS HDF5
+    2. GRDL BIOMASSL1Reader for BIOMASS directories
     3. GRDL open_image() for generic formats (GeoTIFF, NITF, HDF5, JPEG2000)
 
     Parameters
@@ -82,7 +85,7 @@ def _try_open_reader(filepath: str):
     except Exception:
         pass
 
-    # Try BIOMASS
+    # Try BIOMASS (directory product)
     try:
         from grdl.IO.sar import BIOMASSL1Reader
         return BIOMASSL1Reader(str(path))
@@ -97,6 +100,83 @@ def _try_open_reader(filepath: str):
         pass
 
     return None
+
+
+def _try_open_readers(filepath: str) -> List[Tuple[Any, str]]:
+    """Open readers for *filepath*, returning a list of ``(reader, name)`` pairs.
+
+    Handles two special cases beyond the basic single-reader path:
+
+    **BIOMASS measurement TIFF redirect**
+        When the user drops an ``*_abs.tiff`` or ``*_phase.tiff`` from inside
+        a ``measurement/`` sub-directory of a BIOMASS product, the function
+        redirects to ``BIOMASSL1Reader`` on the parent product directory.
+        This is required because the individual TIFF is magnitude-only;
+        the complex scattering matrix needed for polarimetric decomposition
+        requires both the ``_abs`` and ``_phase`` bands read together.
+
+    **NISAR HDF5 multi-polarization expansion**
+        A single NISAR ``.h5`` file can contain multiple polarizations.
+        ``open_sar()`` only opens the first available polarization, which
+        would leave the stack incomplete.  When ``available_polarizations``
+        has more than one entry, the function creates one ``NISARReader``
+        per polarization, labelled ``filename.h5 [HH]``, etc.
+
+    Parameters
+    ----------
+    filepath : str
+        Path to a file or directory.
+
+    Returns
+    -------
+    list of (reader, display_name)
+        Empty list if the file cannot be opened.
+    """
+    path = Path(filepath)
+
+    # ── BIOMASS measurement TIFF redirect ────────────────────────────────────
+    # Pattern: .../BIO_S3_.../measurement/*_abs.tiff (or *_phase.tiff / *.vrt)
+    if path.suffix.lower() in ('.tiff', '.tif', '.vrt') and path.parent.name == 'measurement':
+        product_dir = path.parent.parent
+        if (product_dir / 'annotation').is_dir():
+            try:
+                from grdl.IO.sar import BIOMASSL1Reader
+                reader = BIOMASSL1Reader(str(product_dir))
+                logger.info(
+                    "Redirected '%s' → BIOMASS product dir '%s'",
+                    path.name, product_dir.name,
+                )
+                return [(reader, product_dir.name)]
+            except Exception as exc:
+                logger.debug("BIOMASS product-dir redirect failed: %s", exc)
+
+    # ── Standard single-reader open ──────────────────────────────────────────
+    reader = _try_open_reader(filepath)
+    if reader is None:
+        return []
+
+    # ── NISAR multi-pol upgrade ───────────────────────────────────────────────
+    # When the file exposes multiple polarizations, upgrade to a single CYX
+    # cube reader (NISARReader with polarizations='all') instead of creating
+    # N separate per-pol readers.  The CYX reader returns (C, rows, cols)
+    # from read_chip/read_full, with all channels described in channel_metadata.
+    avail_pols = getattr(
+        getattr(reader, 'metadata', None), 'available_polarizations', None
+    )
+    if avail_pols and len(avail_pols) > 1:
+        try:
+            from grdl.IO.sar.nisar import NISARReader
+            if isinstance(reader, NISARReader):
+                reader.close()
+                reader = NISARReader(str(path), polarizations='all')
+                logger.info(
+                    "Upgraded NISAR '%s' → CYX multi-pol reader (%s)",
+                    path.name, reader.metadata.available_polarizations,
+                )
+        except Exception as exc:
+            logger.debug("NISAR multi-pol upgrade failed: %s", exc)
+
+    return [(reader, path.name)]
 
 
 class OWImageLoader(OWBaseWidget):
@@ -235,28 +315,38 @@ class OWImageLoader(OWBaseWidget):
     def _load_files(self, paths: List[str]) -> None:
         """Load a list of image file paths."""
         for filepath in paths:
-            if filepath in self._names:
+            entries = _try_open_readers(filepath)
+
+            if not entries:
+                self.Warning.load_failed(Path(filepath).name)
                 continue
 
-            reader = _try_open_reader(filepath)
-            if reader is not None:
+            for reader, display_name in entries:
+                # Avoid loading the same display name twice (e.g., settings
+                # restore on second call, or NISAR pol already expanded).
+                if display_name in self._names:
+                    try:
+                        reader.close()
+                    except Exception:
+                        pass
+                    continue
+
                 self._readers.append(reader)
-                name = Path(filepath).name
-                self._names.append(name)
-                item = QListWidgetItem(name)
+                self._names.append(display_name)
+
+                item = QListWidgetItem(display_name)
                 item.setData(Qt.ItemDataRole.UserRole, filepath)
 
-                # Add shape/dtype info as tooltip
                 try:
                     shape = reader.get_shape()
                     dtype = reader.get_dtype()
-                    item.setToolTip(f"{filepath}\nShape: {shape}\nDtype: {dtype}")
+                    item.setToolTip(
+                        f"{filepath}\nShape: {shape}\nDtype: {dtype}"
+                    )
                 except Exception:
                     item.setToolTip(filepath)
 
                 self._list_widget.addItem(item)
-            else:
-                self.Warning.load_failed(Path(filepath).name)
 
         self.file_paths = [
             self._list_widget.item(i).data(Qt.ItemDataRole.UserRole)
