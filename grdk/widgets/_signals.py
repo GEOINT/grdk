@@ -36,6 +36,18 @@ from typing import Any, Dict, List, Optional
 # Third-party
 import numpy as np
 
+try:
+    from grdl.vocabulary import ImageModality
+except ImportError:  # pragma: no cover — grdl not installed
+    ImageModality = None  # type: ignore[assignment]
+
+try:
+    from grdl.discovery import extract_modality as _extract_modality
+    _HAS_GRDL_DISCOVERY = True
+except ImportError:  # pragma: no cover — grdl not installed
+    _HAS_GRDL_DISCOVERY = False
+    _extract_modality = None  # type: ignore[assignment]
+
 
 @dataclass
 class StackMetadata:
@@ -88,6 +100,13 @@ class ImageStack:
         List of RegistrationResult objects (one per non-reference image).
     stack_metadata : StackMetadata, optional
         Typed stack-level metadata.
+    modality_hint : ImageModality, optional
+        Explicit image modality for this stack.  When set, the processor
+        palette will filter to processors compatible with this modality
+        (using the implicit-ANY rule: processors with no declared
+        modalities are always shown).  When ``None``, an auto-derive
+        attempt is made from the first reader's metadata; if that also
+        fails, no modality filtering is applied.
     """
 
     def __init__(
@@ -97,12 +116,14 @@ class ImageStack:
         geolocation: Optional[Any] = None,
         registration_results: Optional[list] = None,
         stack_metadata: Optional[StackMetadata] = None,
+        modality_hint: Optional[Any] = None,  # ImageModality | None
     ) -> None:
         self.readers = readers or []
         self.names = names or []
         self.geolocation = geolocation
         self.registration_results = registration_results or []
         self.stack_metadata = stack_metadata if stack_metadata is not None else StackMetadata()
+        self.modality_hint = modality_hint
 
     def __len__(self) -> int:
         return len(self.readers)
@@ -174,6 +195,71 @@ class WorkflowArtifactSignal:
         self.python_dsl = python_dsl
         self.yaml_definition = yaml_definition
         self.metadata = metadata or {}
+
+
+def get_modality_hint(signal: Any) -> Any:
+    """Extract the modality hint from an ImageStack or ChipSetSignal.
+
+    Returns the :class:`~grdl.vocabulary.ImageModality` (or ``None``) that
+    best describes the imagery flowing through *signal*.  Widgets use this
+    to call
+    :func:`~grdl_rt.execution.discovery.filter_processors_for_modality` or
+    :func:`~grdl_rt.execution.discovery.filter_processors_for_connection`
+    to build a modality-aware processor palette.
+
+    **For ImageStack:**
+        Returns ``signal.modality_hint`` if explicitly set.  Otherwise
+        auto-derives from the first reader's metadata using
+        :func:`grdl.discovery.extract_modality` — the canonical grdl
+        classifier that checks metadata type names, dtype, and band count.
+
+    **For ChipSetSignal:**
+        Returns ``chip.modality`` from the first chip in the set that
+        carries a non-``None`` modality.  Chip modality is set by the
+        sidecar loader from the GeoJSON FeatureCollection's
+        ``properties.modality`` field.
+
+    Parameters
+    ----------
+    signal : ImageStack or ChipSetSignal
+        An Orange signal instance.
+
+    Returns
+    -------
+    ImageModality or None
+        The detected or declared modality, or ``None`` if it cannot be
+        determined.  ``None`` means no modality filtering should be applied
+        (show all processors).
+    """
+    if isinstance(signal, ImageStack):
+        # Explicit hint takes priority.
+        if signal.modality_hint is not None:
+            return signal.modality_hint
+
+        # Auto-derive from the first reader using grdl's canonical classifier.
+        if signal.readers and _HAS_GRDL_DISCOVERY and ImageModality is not None:
+            reader = signal.readers[0]
+            meta = getattr(reader, "metadata", None)
+            if meta is not None:
+                modality_str = _extract_modality(meta)
+                if modality_str is not None:
+                    try:
+                        return ImageModality(modality_str)
+                    except ValueError:
+                        pass
+        return None
+
+    if isinstance(signal, ChipSetSignal):
+        chip_set = signal.chip_set
+        if chip_set is None:
+            return None
+        for chip in chip_set:
+            mod = getattr(chip, "modality", None)
+            if mod is not None:
+                return mod
+        return None
+
+    return None
 
 
 class GrdkProjectSignal:
