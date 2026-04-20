@@ -55,6 +55,7 @@ from PyQt6.QtCore import Qt
 # GRDK internal
 from grdl_rt.execution.discovery import discover_processors
 from grdl_rt.execution.gpu import GpuBackend
+from grdl_rt.execution.graph import types_compatible
 from grdk.viewers.image_canvas import ImageCanvasThumbnail
 from grdk.widgets._signals import ChipSetSignal, ProcessingPipelineSignal
 
@@ -83,6 +84,13 @@ class OWPreview(OWBaseWidget):
     class Warning(OWBaseWidget.Warning):
         no_chips = Msg("No chips connected.")
         no_pipeline = Msg("No pipeline connected.")
+        type_mismatch = Msg(
+            "Pipeline output type '{}' is not compatible with this viewer. "
+            "Expected a raster or binary_mask pipeline."
+        )
+
+    # The data types this widget can meaningfully display
+    _ACCEPTED_OUTPUT_TYPES = {None, "raster", "binary_mask"}
 
     want_main_area = True
 
@@ -131,9 +139,16 @@ class OWPreview(OWBaseWidget):
         if signal is None or signal.workflow is None:
             self._pipeline = None
             self.Warning.no_pipeline()
+            self.Warning.type_mismatch.clear()
         else:
             self._pipeline = signal.workflow
             self.Warning.no_pipeline.clear()
+            # Warn when the pipeline produces a type we cannot render
+            out_type = getattr(signal, 'output_port_type', None)
+            if out_type not in self._ACCEPTED_OUTPUT_TYPES:
+                self.Warning.type_mismatch(out_type)
+            else:
+                self.Warning.type_mismatch.clear()
         self._refresh()
 
     def _refresh(self) -> None:

@@ -54,49 +54,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 # GRDK internal
-from grdk.widgets._signals import GrdkProjectSignal, ImageStack
-
-
-def _try_open_reader(filepath: str):
-    """Attempt to open an image using GRDL readers.
-
-    Tries multiple reader strategies in order:
-    1. GRDL open_sar() for SAR formats (SICD, CPHD, CRSD, SIDD, Sentinel-1)
-    2. GRDL BIOMASSL1Reader for BIOMASS HDF5
-    3. GRDL open_image() for generic formats (GeoTIFF, NITF, HDF5, JPEG2000)
-
-    Parameters
-    ----------
-    filepath : str
-
-    Returns
-    -------
-    ImageReader or None
-    """
-    path = Path(filepath)
-
-    # Try SAR formats first
-    try:
-        from grdl.IO.sar import open_sar
-        return open_sar(str(path))
-    except Exception:
-        pass
-
-    # Try BIOMASS
-    try:
-        from grdl.IO.sar import BIOMASSL1Reader
-        return BIOMASSL1Reader(str(path))
-    except Exception:
-        pass
-
-    # Generic fallback (GeoTIFF, NITF, HDF5, JPEG2000)
-    try:
-        from grdl.IO import open_image
-        return open_image(str(path))
-    except Exception:
-        pass
-
-    return None
+from grdk.widgets._signals import GrdkProjectSignal, ImageStack, StackMetadata
 
 
 class OWImageLoader(OWBaseWidget):
@@ -234,11 +192,16 @@ class OWImageLoader(OWBaseWidget):
 
     def _load_files(self, paths: List[str]) -> None:
         """Load a list of image file paths."""
+        from grdl.IO.generic import open_any
         for filepath in paths:
             if filepath in self._names:
                 continue
 
-            reader = _try_open_reader(filepath)
+            try:
+                reader = open_any(filepath)
+            except Exception:
+                self.Warning.load_failed(Path(filepath).name)
+                continue
             if reader is not None:
                 self._readers.append(reader)
                 name = Path(filepath).name
@@ -255,8 +218,6 @@ class OWImageLoader(OWBaseWidget):
                     item.setToolTip(filepath)
 
                 self._list_widget.addItem(item)
-            else:
-                self.Warning.load_failed(Path(filepath).name)
 
         self.file_paths = [
             self._list_widget.item(i).data(Qt.ItemDataRole.UserRole)

@@ -81,90 +81,28 @@ def _suppress_stderr():
         os.close(old_fd)
 
 
-def _find_biomass_product_dir(path: Path) -> Optional[Path]:
-    """Locate the BIOMASS product directory containing annotation/.
-
-    BIOMASS products may be nested: the user-provided directory may
-    contain a single child directory (often with the same name) that
-    holds the actual ``annotation/`` and ``measurement/`` folders.
-
-    Returns the product directory path, or None if not found.
-    """
-    if (path / "annotation").is_dir():
-        return path
-    # Check immediate subdirectories for nested structure
-    for child in path.iterdir():
-        if child.is_dir() and (child / "annotation").is_dir():
-            return child
-    return None
-
-
-def _find_sentinel2_band_file(safe_dir: Path) -> Optional[Path]:
-    """Find the best JP2 band file inside a Sentinel-2 .SAFE directory.
-
-    Prefers TCI (True Color Image) at 10m, then B04 (Red) at 10m,
-    then any spectral band JP2 at the highest resolution available.
-
-    Returns the JP2 file path, or None if not found.
-    """
-    # Locate IMG_DATA directory inside GRANULE
-    granule_dir = safe_dir / "GRANULE"
-    if not granule_dir.is_dir():
-        return None
-
-    img_data_dirs = list(granule_dir.glob("*/IMG_DATA"))
-    if not img_data_dirs:
-        return None
-    img_data = img_data_dirs[0]
-
-    # Search in resolution order: 10m > 20m > 60m
-    for res_dir_name in ("R10m", "R20m", "R60m"):
-        res_dir = img_data / res_dir_name
-        if not res_dir.is_dir():
-            continue
-        jp2_files = list(res_dir.glob("*.jp2"))
-        if not jp2_files:
-            continue
-
-        # Prefer TCI (True Color Image — pre-composed RGB)
-        for f in jp2_files:
-            if "_TCI_" in f.name:
-                return f
-
-        # Prefer B04 (Red band)
-        for f in jp2_files:
-            if "_B04_" in f.name:
-                return f
-
-        # Prefer any spectral band (B01–B12, B8A)
-        for f in jp2_files:
-            if "_B" in f.name:
-                return f
-
-        # Any JP2 in this resolution tier
-        return jp2_files[0]
-
-    # Fallback: any JP2 under IMG_DATA (flat structure)
-    jp2_files = list(img_data.glob("*.jp2"))
-    if jp2_files:
-        for f in jp2_files:
-            if "_TCI_" in f.name:
-                return f
-        for f in jp2_files:
-            if "_B04_" in f.name:
-                return f
-        return jp2_files[0]
-
-    return None
-
-
 def open_any(filepath: Union[str, Path]) -> Any:
     """Open any supported grdl imagery file or directory.
 
-    Tries all grdl modality openers in priority order: directory-based
-    formats first (BIOMASS, Sentinel-2 .SAFE), then SAR (so NITF files
-    containing SICD complex data are handled correctly), then generic
-    formats, then EO, IR, and multispectral.
+    Thin adapter over ``grdl.IO.generic.open_any``.  All routing logic
+    (SAR, EO, IR, multispectral, BIOMASS, Sentinel-2, GDAL fallback,
+    invasive probing) lives in grdl.  The only grdk-specific concern
+    retained here is suppressing C-level GDAL stderr noise.
+
+    **Supported formats** (select the exact file listed below):
+
+    - **SICD / SIDD / CPHD / CRSD**: select the ``.nitf``, ``.xml``, or
+      ``.crsd`` file directly.
+    - **Sentinel-1 SLC (SAFE)**: select the ``.SAFE`` directory.
+      For best results, open the ``manifest.safe`` file inside it.
+    - **BIOMASS L1**: select the top-level product directory
+      (e.g. ``BIO_S3_SCS__1S_...``).  The directory must contain an
+      ``annotation/`` subdirectory either at the top level or one level
+      down.
+    - **Sentinel-2 (SAFE)**: open the ``.SAFE`` directory directly.
+      ``open_any`` will locate the best-quality band file automatically.
+    - **NISAR**: select the ``.h5`` product file.
+    - **GeoTIFF / NITF / JPEG2000 / HDF5**: select the file directly.
 
     Parameters
     ----------
@@ -181,93 +119,10 @@ def open_any(filepath: Union[str, Path]) -> Any:
     ValueError
         If no opener can handle the file.
     """
-    path = Path(filepath)
-    errors = []
     _log.info("open_any: trying %s", filepath)
-
-    # Suppress C-level GDAL warnings (e.g. "TXTFMT: Invalid field value")
-    # that are emitted to stderr when reading NITF/SICD files.
     with _suppress_stderr():
-        # 0. Directory-based formats
-        if path.is_dir():
-            # BIOMASS — directory name contains 'BIO' and product type
-            if 'BIO' in path.name.upper():
-                product_dir = _find_biomass_product_dir(path)
-                if product_dir is not None:
-                    try:
-                        from grdl.IO import open_biomass
-                        return open_biomass(product_dir)
-                    except (ValueError, ImportError, Exception) as e:
-                        errors.append(f"BIOMASS: {e}")
-
-            # Sentinel-2 .SAFE directory
-            if path.name.upper().endswith('.SAFE'):
-                band_file = _find_sentinel2_band_file(path)
-                if band_file is not None:
-                    try:
-                        from grdl.IO.eo.sentinel2 import Sentinel2Reader
-                        return Sentinel2Reader(band_file)
-                    except (ValueError, ImportError, Exception) as e:
-                        errors.append(f"Sentinel-2 SAFE: {e}")
-
-        # 1. SAR first — NITF files may be SICD (complex SAR), not generic NITF
-        try:
-            from grdl.IO import open_sar
-            reader = open_sar(path)
-            _log.info("open_any: opened via open_sar → %s", type(reader).__name__)
-            return reader
-        except (ValueError, ImportError, Exception) as e:
-            _log.debug("open_any: open_sar failed: %s", e)
-            errors.append(f"SAR: {e}")
-
-        # 2. Generic formats (GeoTIFF, NITF, HDF5, JP2)
-        try:
-            from grdl.IO import open_image
-            reader = open_image(path)
-            _log.info("open_any: opened via open_image → %s", type(reader).__name__)
-            return reader
-        except (ValueError, ImportError, Exception) as e:
-            _log.debug("open_any: open_image failed: %s", e)
-            errors.append(f"Image: {e}")
-
-        # 3. EO-specific (Sentinel-2, etc.)
-        try:
-            from grdl.IO import open_eo
-            reader = open_eo(path)
-            _log.info("open_any: opened via open_eo → %s", type(reader).__name__)
-            return reader
-        except (ValueError, ImportError, Exception) as e:
-            _log.debug("open_any: open_eo failed: %s", e)
-            errors.append(f"EO: {e}")
-
-        # 4. IR
-        try:
-            from grdl.IO import open_ir
-            reader = open_ir(path)
-            _log.info("open_any: opened via open_ir → %s", type(reader).__name__)
-            return reader
-        except (ValueError, ImportError, Exception) as e:
-            _log.debug("open_any: open_ir failed: %s", e)
-            errors.append(f"IR: {e}")
-
-        # 5. Multispectral
-        try:
-            from grdl.IO import open_multispectral
-            reader = open_multispectral(path)
-            _log.info(
-                "open_any: opened via open_multispectral → %s",
-                type(reader).__name__,
-            )
-            return reader
-        except (ValueError, ImportError, Exception) as e:
-            _log.debug("open_any: open_multispectral failed: %s", e)
-            errors.append(f"MSI: {e}")
-
-    _log.error("open_any: all openers failed for %s", filepath)
-    raise ValueError(
-        f"Could not open {filepath}. Tried all grdl openers:\n"
-        + "\n".join(f"  - {e}" for e in errors)
-    )
+        from grdl.IO.generic import open_any as _grdl_open_any
+        return _grdl_open_any(filepath)
 
 
 def create_geolocation(reader: Any) -> Optional[Any]:

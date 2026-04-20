@@ -59,12 +59,13 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtGui import QColor, QImage, QPixmap
 from PyQt6.QtCore import Qt, QTimer
 
 # GRDK internal
 from grdl_rt.execution.discovery import discover_processors, get_processor_tags
 from grdl_rt.execution.gpu import GpuBackend
+from grdl_rt.execution.graph import types_compatible
 from grdl_rt.execution.workflow import ProcessingStep, WorkflowDefinition
 from grdk.widgets._signals import ChipSetSignal, ProcessingPipelineSignal
 
@@ -145,8 +146,10 @@ class OWOrchestrator(OWBaseWidget):
         btn_emit.clicked.connect(self._on_emit)
         box.layout().addWidget(btn_emit)
 
-        gpu_info = "GPU" if self._gpu.gpu_available else "CPU only"
-        box.layout().addWidget(QLabel(f"Compute: {gpu_info}", self))
+        self._compat_label = QLabel("", self)
+        self._compat_label.setStyleSheet("color: orange; font-size: 10px;")
+        self._compat_label.setWordWrap(True)
+        box.layout().addWidget(self._compat_label)
 
         # --- Main area: 3-panel splitter ---
         splitter = QSplitter(Qt.Orientation.Horizontal, self.mainArea)
@@ -288,6 +291,7 @@ class OWOrchestrator(OWBaseWidget):
         self._workflow.add_step(step)
         self._steps_list.addItem(f"{len(self._workflow.steps)}. {proc_name}")
         self._workflow_name_label.setText(f"Steps: {len(self._workflow.steps)}")
+        self._refresh_palette_compat()
         self._schedule_preview()
 
     def _on_remove_step(self) -> None:
@@ -298,6 +302,7 @@ class OWOrchestrator(OWBaseWidget):
 
         self._workflow.remove_step(row)
         self._rebuild_steps_list()
+        self._refresh_palette_compat()
         self._schedule_preview()
 
     def _on_move_up(self) -> None:
@@ -453,4 +458,60 @@ class OWOrchestrator(OWBaseWidget):
 
     def _on_emit(self) -> None:
         """Emit the current workflow as a ProcessingPipeline signal."""
-        self.Outputs.pipeline.send(ProcessingPipelineSignal(self._workflow))
+        output_type = self._get_last_output_type()
+        self.Outputs.pipeline.send(
+            ProcessingPipelineSignal(self._workflow, output_port_type=output_type)
+        )
+
+    def _get_last_output_type(self) -> Optional[str]:
+        """Return the DataPortType string produced by the last workflow step.
+
+        Reads ``__processor_tags__['output_type']`` from the last step's
+        processor class.  Falls back to reading ``input_type`` as a proxy
+        (many transforms are type-preserving).  Returns ``None`` if the
+        workflow is empty or the type is undeclared.
+        """
+        if not self._workflow.steps:
+            return None
+        last_step = self._workflow.steps[-1]
+        proc_class = self._processors.get(last_step.processor_name)
+        if proc_class is None:
+            return None
+        tags = get_processor_tags(proc_class)
+        out = tags.get('output_type')
+        if out is not None:
+            return out.value if hasattr(out, 'value') else str(out)
+        # Type-preserving processors: output == input
+        inp = tags.get('input_type')
+        if inp is not None:
+            return inp.value if hasattr(inp, 'value') else str(inp)
+        return None
+
+    def _refresh_palette_compat(self) -> None:
+        """Recolour palette items incompatible with current last-step output.
+
+        Items that declare an ``input_type`` incompatible with the last step's
+        ``output_type`` are greyed out.  Items with no ``input_type`` declared
+        (implicit ANY) remain enabled.  This does not remove items — the user
+        can still add them but sees a visual affordance.
+        """
+        last_out = self._get_last_output_type()
+        self._compat_label.setText("" if last_out is None else f"Last output: {last_out}")
+
+        for i in range(self._palette_list.count()):
+            item = self._palette_list.item(i)
+            if item is None:
+                continue
+            proc_name = item.text()
+            proc_class = self._processors.get(proc_name)
+            if proc_class is None:
+                continue
+            tags = get_processor_tags(proc_class)
+            proc_in = tags.get('input_type')
+            proc_in_str = (proc_in.value if hasattr(proc_in, 'value') else str(proc_in)) if proc_in else None
+            compatible = types_compatible(last_out, proc_in_str)
+            item.setForeground(
+                item.foreground()  # keep default colour
+                if compatible
+                else QColor(150, 150, 150)
+            )
