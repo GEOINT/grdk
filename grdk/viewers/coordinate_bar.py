@@ -64,6 +64,7 @@ if _QT_AVAILABLE:
             super().__init__(parent)
 
             self._geolocation: Optional[Any] = None
+            self._coord_mode: str = "pixel"  # "pixel" | "geo"
 
             # Pending geolocation lookup
             self._pending_row: Optional[int] = None
@@ -80,12 +81,13 @@ if _QT_AVAILABLE:
 
             layout = QHBoxLayout(self)
             layout.setContentsMargins(4, 2, 4, 2)
-            layout.addWidget(self._pixel_label)
             layout.addWidget(self._geo_label)
+            layout.addWidget(self._pixel_label)
             layout.addWidget(self._value_label)
             layout.addStretch(1)
 
             self.setFixedHeight(24)
+            self._apply_coord_mode()
 
         def set_geolocation(self, geo: Optional[Any]) -> None:
             """Set the geolocation model for lat/lon display.
@@ -98,6 +100,31 @@ if _QT_AVAILABLE:
             self._geolocation = geo
             if geo is None:
                 self._geo_label.setText("")
+
+        def set_coord_mode(self, mode: str) -> None:
+            """Switch the primary coordinate display mode.
+
+            Parameters
+            ----------
+            mode : str
+                ``"pixel"`` — pixel row/col shown prominently, lat/lon secondary.
+                ``"geo"`` — lat/lon shown prominently, pixel row/col dimmed.
+            """
+            if mode not in ("pixel", "geo"):
+                return
+            self._coord_mode = mode
+            self._apply_coord_mode()
+
+        def _apply_coord_mode(self) -> None:
+            """Update label styles to reflect the current coord mode."""
+            if self._coord_mode == "geo":
+                # Geo primary: bold geo label, dimmed pixel label
+                self._geo_label.setStyleSheet("font-weight: bold;")
+                self._pixel_label.setStyleSheet("color: #888; font-size: 10px;")
+            else:
+                # Pixel primary: normal pixel label, dimmed geo label
+                self._pixel_label.setStyleSheet("")
+                self._geo_label.setStyleSheet("color: #888; font-size: 10px;")
 
         def connect_canvas(self, canvas: Any) -> None:
             """Connect to an ImageCanvas's pixel_hovered signal.

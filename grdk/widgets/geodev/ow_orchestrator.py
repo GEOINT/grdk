@@ -63,11 +63,19 @@ from PyQt6.QtGui import QColor, QImage, QPixmap
 from PyQt6.QtCore import Qt, QTimer
 
 # GRDK internal
-from grdl_rt.execution.discovery import discover_processors, get_processor_tags
+from grdl_rt.execution.discovery import (
+    discover_processors,
+    get_processor_tags,
+    filter_processors_for_connection,
+)
 from grdl_rt.execution.gpu import GpuBackend
-from grdl_rt.execution.graph import types_compatible
-from grdl_rt.execution.workflow import ProcessingStep, WorkflowDefinition
-from grdk.widgets._signals import ChipSetSignal, ProcessingPipelineSignal
+from grdl_rt.execution.graph import types_compatible, WorkflowGraph
+from grdl_rt.execution.workflow import ProcessingStep, TapOutStepDef, WorkflowDefinition
+from grdk.widgets._signals import (
+    ChipSetSignal,
+    ProcessingPipelineSignal,
+    get_modality_hint,
+)
 
 
 def _array_to_pixmap(arr: np.ndarray, size: int = 256) -> QPixmap:
@@ -127,7 +135,9 @@ class OWOrchestrator(OWBaseWidget):
 
         self._processors = discover_processors()
         self._workflow = WorkflowDefinition(name="New Workflow")
+        self._graph = WorkflowGraph()
         self._chip_set: Optional[Any] = None
+        self._detected_modality: Optional[Any] = None  # ImageModality | None
         self._selected_chip_index = 0
         self._gpu = GpuBackend()
         self._step_param_controls: List[Dict[str, Any]] = []
@@ -206,9 +216,13 @@ class OWOrchestrator(OWBaseWidget):
         btn_down.clicked.connect(self._on_move_down)
         btn_remove = QPushButton("Remove")
         btn_remove.clicked.connect(self._on_remove_step)
+        btn_tapout = QPushButton("Tapout…")
+        btn_tapout.setToolTip("Insert a save-to-disk tapout after the selected step")
+        btn_tapout.clicked.connect(self._on_mark_tapout)
         step_btns.layout().addWidget(btn_up)
         step_btns.layout().addWidget(btn_down)
         step_btns.layout().addWidget(btn_remove)
+        step_btns.layout().addWidget(btn_tapout)
         center.layout().addWidget(step_btns)
 
         # Parameter panel for selected step
@@ -269,13 +283,15 @@ class OWOrchestrator(OWBaseWidget):
 
         self.Warning.no_chips.clear()
         self._chip_set = signal.chip_set
+        self._detected_modality = get_modality_hint(signal)
         self._selected_chip_index = 0
         self._chip_spinbox.setMaximum(max(0, len(signal.chip_set) - 1))
         self._chip_spinbox.setValue(0)
+        self._refresh_palette_compat()
         self._schedule_preview()
 
     def _on_add_step(self) -> None:
-        """Add selected palette item as a workflow step."""
+        """Add selected palette item as a workflow step, with type validation."""
         item = self._palette_list.currentItem()
         if item is None:
             return
@@ -283,6 +299,31 @@ class OWOrchestrator(OWBaseWidget):
         proc_name = item.text()
         proc_class = self._processors.get(proc_name)
         version = getattr(proc_class, '__processor_version__', '') if proc_class else ''
+
+        # WorkflowGraph type validation
+        tags = get_processor_tags(proc_class) if proc_class else {}
+        input_type = tags.get('input_type')
+        output_type = tags.get('output_type')
+        input_type_str = (input_type.value if hasattr(input_type, 'value') else str(input_type)) if input_type else None
+        output_type_str = (output_type.value if hasattr(output_type, 'value') else str(output_type)) if output_type else None
+
+        step_id = f"step_{len(self._workflow.steps) + 1}_{proc_name}"
+        self._graph.add_node(step_id, proc_name, input_type_str, output_type_str)
+
+        if len(self._workflow.steps) > 0:
+            prev_step = self._workflow.steps[-1]
+            prev_id = f"step_{len(self._workflow.steps)}_{prev_step.processor_name}"
+            try:
+                self._graph.connect(prev_id, step_id)
+                self._compat_label.setText("")
+            except ValueError as exc:
+                self._compat_label.setText(f"Type mismatch: {exc}")
+                # Roll back the node we just added
+                try:
+                    self._graph.remove_node(step_id)
+                except Exception:
+                    pass
+                return
 
         step = ProcessingStep(
             processor_name=proc_name,
@@ -293,6 +334,35 @@ class OWOrchestrator(OWBaseWidget):
         self._workflow_name_label.setText(f"Steps: {len(self._workflow.steps)}")
         self._refresh_palette_compat()
         self._schedule_preview()
+
+    def _on_mark_tapout(self) -> None:
+        """Insert a TapOutStepDef after the selected workflow step."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        row = self._steps_list.currentRow()
+        if row < 0:
+            # No step selected — append after all steps
+            insert_after = len(self._workflow.steps) - 1
+        else:
+            insert_after = row
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Select Tapout Output Path",
+            "",
+            "NumPy (*.npy);;GeoTIFF (*.tif *.tiff);;All Files (*)",
+        )
+        if not path:
+            return
+
+        tapout = TapOutStepDef(
+            path=path,
+            id=f"tapout_{insert_after + 1}",
+        )
+        # Insert after the selected step
+        self._workflow.steps.insert(insert_after + 1, tapout)
+        self._rebuild_steps_list()
+        self._workflow_name_label.setText(f"Steps: {len(self._workflow.steps)}")
 
     def _on_remove_step(self) -> None:
         """Remove the selected workflow step."""
@@ -331,7 +401,13 @@ class OWOrchestrator(OWBaseWidget):
         """Refresh the steps list widget from the workflow."""
         self._steps_list.clear()
         for i, step in enumerate(self._workflow.steps):
-            self._steps_list.addItem(f"{i + 1}. {step.processor_name}")
+            if isinstance(step, TapOutStepDef):
+                label = f"  ⬇ tapout → {step.path}"
+                item = QListWidgetItem(label)
+                item.setForeground(QColor(80, 160, 80))
+            else:
+                item = QListWidgetItem(f"{i + 1}. {step.processor_name}")
+            self._steps_list.addItem(item)
         self._workflow_name_label.setText(f"Steps: {len(self._workflow.steps)}")
 
     def _on_step_selected(self, row: int) -> None:
@@ -488,15 +564,31 @@ class OWOrchestrator(OWBaseWidget):
         return None
 
     def _refresh_palette_compat(self) -> None:
-        """Recolour palette items incompatible with current last-step output.
+        """Recolour palette items incompatible with current last-step output or modality.
 
-        Items that declare an ``input_type`` incompatible with the last step's
-        ``output_type`` are greyed out.  Items with no ``input_type`` declared
-        (implicit ANY) remain enabled.  This does not remove items — the user
-        can still add them but sees a visual affordance.
+        - Port-type incompatible items are greyed out.
+        - Modality-incompatible items (where the chip modality is known and the
+          processor declares non-empty modalities that don't include it) are
+          hidden entirely.
+        - Items with no ``input_type`` or empty ``modalities`` (implicit ANY)
+          remain enabled.
         """
         last_out = self._get_last_output_type()
         self._compat_label.setText("" if last_out is None else f"Last output: {last_out}")
+
+        modality_str: Optional[str] = None
+        if self._detected_modality is not None:
+            m = self._detected_modality
+            modality_str = m.value if hasattr(m, 'value') else str(m)
+
+        # Build a modality-filtered compatible set for quick lookup
+        compat_names: Optional[set] = None
+        if modality_str is not None:
+            try:
+                compat_map = filter_processors_for_connection(last_out, modality_str)
+                compat_names = set(compat_map.keys())
+            except Exception:
+                compat_names = None
 
         for i in range(self._palette_list.count()):
             item = self._palette_list.item(i)
@@ -507,11 +599,19 @@ class OWOrchestrator(OWBaseWidget):
             if proc_class is None:
                 continue
             tags = get_processor_tags(proc_class)
+
+            # Port-type compatibility (affects colour)
             proc_in = tags.get('input_type')
             proc_in_str = (proc_in.value if hasattr(proc_in, 'value') else str(proc_in)) if proc_in else None
-            compatible = types_compatible(last_out, proc_in_str)
+            port_ok = types_compatible(last_out, proc_in_str)
+
+            # Modality compatibility (affects visibility)
+            if compat_names is not None:
+                modality_ok = proc_name in compat_names
+            else:
+                modality_ok = True
+
+            item.setHidden(not modality_ok)
             item.setForeground(
-                item.foreground()  # keep default colour
-                if compatible
-                else QColor(150, 150, 150)
+                item.foreground() if port_ok else QColor(150, 150, 150)
             )

@@ -50,11 +50,19 @@ from PyQt6.QtWidgets import (
 
 # GRDK internal
 from grdl_rt.execution.discovery import (
-    discover_processors, get_processor_tags,
-    get_all_modalities, get_all_categories,
+    filter_processors_for_connection,
+    filter_processors_for_modality,
+    get_processor_tags,
+    get_all_modalities,
+    get_all_categories,
 )
 from grdl_rt.execution.workflow import ProcessingStep
-from grdk.widgets._signals import ProcessingPipelineSignal
+from grdk.widgets._signals import (
+    ChipSetSignal,
+    ImageStack,
+    ProcessingPipelineSignal,
+    get_modality_hint,
+)
 
 
 class OWProcessor(OWBaseWidget):
@@ -71,6 +79,10 @@ class OWProcessor(OWBaseWidget):
     category = "GEODEV"
     priority = 65
 
+    class Inputs:
+        chip_set = Input("Chip Set", ChipSetSignal, auto_summary=False)
+        upstream_pipeline = Input("Upstream Pipeline", ProcessingPipelineSignal, auto_summary=False)
+
     class Outputs:
         pipeline = Output("Pipeline", ProcessingPipelineSignal, auto_summary=False)
 
@@ -81,33 +93,25 @@ class OWProcessor(OWBaseWidget):
     def __init__(self) -> None:
         super().__init__()
 
-        self._processors = discover_processors()
+        self._modality: Optional[Any] = None  # ImageModality | None
+        self._upstream_output_type: Optional[str] = None
         self._param_controls: Dict[str, Any] = {}
         self._param_group: Optional[QWidget] = None
 
         # --- Control area ---
         box = gui.vBox(self.controlArea, "Processor")
 
-        # Modality filter
+        # Modality filter (manual override; auto-set from incoming signal)
         self._modality_combo = QComboBox(self)
+        self._modality_combo.addItem("Auto (from input)", "auto")
         self._modality_combo.addItem("All Modalities", None)
         for mod in sorted(get_all_modalities(), key=lambda m: m.value):
             self._modality_combo.addItem(mod.value, mod)
         self._modality_combo.currentIndexChanged.connect(self._on_filter_changed)
         box.layout().addWidget(self._modality_combo)
 
-        # Category filter
-        self._category_combo = QComboBox(self)
-        self._category_combo.addItem("All Categories", None)
-        for cat in sorted(get_all_categories(), key=lambda c: c.value):
-            self._category_combo.addItem(cat.value.replace('_', ' ').title(), cat)
-        self._category_combo.currentIndexChanged.connect(self._on_filter_changed)
-        box.layout().addWidget(self._category_combo)
-
         self._combo = QComboBox(self)
         self._combo.addItem("(select processor)", None)
-        for proc_name in sorted(self._processors.keys()):
-            self._combo.addItem(proc_name, proc_name)
         self._combo.currentIndexChanged.connect(self._on_processor_changed)
         box.layout().addWidget(self._combo)
 
@@ -120,11 +124,62 @@ class OWProcessor(OWBaseWidget):
         self._params_container.setLayout(QVBoxLayout())
         box.layout().addWidget(self._params_container)
 
+        self._rebuild_combo()
+
         # Restore selection
         if self.selected_processor:
             idx = self._combo.findData(self.selected_processor)
             if idx >= 0:
                 self._combo.setCurrentIndex(idx)
+
+    @Inputs.chip_set
+    def set_chip_set(self, signal: Optional[ChipSetSignal]) -> None:
+        self._modality = get_modality_hint(signal) if signal is not None else None
+        self._rebuild_combo()
+
+    @Inputs.upstream_pipeline
+    def set_upstream_pipeline(self, signal: Optional[ProcessingPipelineSignal]) -> None:
+        self._upstream_output_type = (
+            signal.output_port_type if signal is not None else None
+        )
+        self._rebuild_combo()
+
+    def _effective_modality(self) -> Optional[str]:
+        """Return the modality string to filter by, respecting manual override."""
+        choice = self._modality_combo.currentData()
+        if choice == "auto":
+            m = self._modality
+            return m.value if m is not None and hasattr(m, "value") else (str(m) if m else None)
+        if choice is None:
+            return None
+        return choice.value if hasattr(choice, "value") else str(choice)
+
+    def _rebuild_combo(self) -> None:
+        """Repopulate processor combo using filter_processors_for_connection."""
+        modality = self._effective_modality()
+        # Use connection-aware filter: respects port types + implicit ANY
+        processors = filter_processors_for_connection(
+            self._upstream_output_type,
+            modality,
+        )
+        # Fallback when no catalog entries exist (dev environment)
+        if not processors:
+            processors = filter_processors_for_modality(modality)
+
+        prev = self._combo.currentData()
+        self._combo.blockSignals(True)
+        self._combo.clear()
+        self._combo.addItem("(select processor)", None)
+        for name in sorted(processors.keys()):
+            self._combo.addItem(name, name)
+        self._combo.blockSignals(False)
+
+        # Restore previous selection if still available
+        idx = self._combo.findData(prev)
+        if idx >= 0:
+            self._combo.setCurrentIndex(idx)
+        elif prev:
+            self._on_processor_changed(0)
 
     def _on_processor_changed(self, index: int) -> None:
         """Handle processor selection change."""
@@ -135,7 +190,12 @@ class OWProcessor(OWBaseWidget):
         self.selected_processor = proc_name
         self._clear_param_controls()
 
-        proc_class = self._processors.get(proc_name)
+        # Resolve from current filtered set
+        modality = self._effective_modality()
+        processors = filter_processors_for_connection(self._upstream_output_type, modality)
+        if not processors:
+            processors = filter_processors_for_modality(modality)
+        proc_class = processors.get(proc_name)
         if proc_class is None:
             return
 
@@ -175,7 +235,11 @@ class OWProcessor(OWBaseWidget):
         if proc_name is None:
             return
 
-        proc_class = self._processors.get(proc_name)
+        modality = self._effective_modality()
+        processors = filter_processors_for_connection(self._upstream_output_type, modality)
+        if not processors:
+            processors = filter_processors_for_modality(modality)
+        proc_class = processors.get(proc_name)
         version = getattr(proc_class, '__processor_version__', '') if proc_class else ''
 
         params = {}
@@ -195,24 +259,8 @@ class OWProcessor(OWBaseWidget):
         self.Outputs.pipeline.send(ProcessingPipelineSignal(wf))
 
     def _on_filter_changed(self, _index: int) -> None:
-        """Rebuild processor combo when modality/category filters change."""
-        modality = self._modality_combo.currentData()
-        category = self._category_combo.currentData()
-
-        self._combo.blockSignals(True)
-        self._combo.clear()
-        self._combo.addItem("(select processor)", None)
-
-        for proc_name in sorted(self._processors.keys()):
-            proc_cls = self._processors[proc_name]
-            tags = get_processor_tags(proc_cls)
-            if modality and modality not in tags.get('modalities', ()):
-                continue
-            if category and tags.get('category') != category:
-                continue
-            self._combo.addItem(proc_name, proc_name)
-
-        self._combo.blockSignals(False)
+        """Rebuild processor combo when modality override changes."""
+        self._rebuild_combo()
 
     def _clear_param_controls(self) -> None:
         """Remove existing parameter controls."""

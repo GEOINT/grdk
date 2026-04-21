@@ -424,10 +424,10 @@ if _QT_AVAILABLE:
             layout.setSpacing(4)
 
             # Sync toggle
-            self._sync_btn = QPushButton("\u26d3", self)  # ⛓ chain
+            self._sync_btn = QPushButton("\U0001f512", self)  # 🔒 locked
             self._sync_btn.setCheckable(True)
             self._sync_btn.setChecked(True)
-            self._sync_btn.setToolTip("Toggle pan/zoom sync")
+            self._sync_btn.setToolTip("Sync enabled \u2014 click to disable")
             self._sync_btn.setFixedSize(28, 28)
             self._sync_btn.toggled.connect(self._on_sync_toggled)
             layout.addWidget(self._sync_btn)
@@ -442,7 +442,13 @@ if _QT_AVAILABLE:
 
             # Crop to overlap
             self._crop_btn = QPushButton("\u2702", self)  # ✂ scissors
-            self._crop_btn.setToolTip("Crop to geographic overlap")
+            self._crop_btn.setToolTip(
+                "Crop viewport to geographic overlap\n\n"
+                "Each pane is cropped to the lat/lon bounding box shared by\n"
+                "both images. The images remain in their native sensor\n"
+                "coordinates (slant range / azimuth) — this is NOT\n"
+                "coregistration. Pixel grids are not resampled or aligned."
+            )
             self._crop_btn.setFixedSize(28, 28)
             self._crop_btn.setEnabled(False)
             self._crop_btn.clicked.connect(self._on_crop_clicked)
@@ -500,11 +506,11 @@ if _QT_AVAILABLE:
 
         def _on_sync_toggled(self, checked: bool) -> None:
             if checked:
-                self._sync_btn.setText("\u26d3")  # chain
-                self._sync_btn.setToolTip("Sync enabled — click to disable")
+                self._sync_btn.setText("\U0001f512")  # 🔒 locked
+                self._sync_btn.setToolTip("Sync enabled \u2014 click to disable")
             else:
-                self._sync_btn.setText("\u26a0")  # warning/broken
-                self._sync_btn.setToolTip("Sync disabled — click to enable")
+                self._sync_btn.setText("\U0001f513")  # 🔓 unlocked
+                self._sync_btn.setToolTip("Sync disabled \u2014 click to enable")
             self.sync_toggled.emit(checked)
 
         def _on_mode_clicked(self) -> None:
@@ -907,10 +913,19 @@ if _QT_AVAILABLE:
         # --- Crop to overlap ---
 
         def crop_to_overlap(self) -> None:
-            """Crop both panes to show only the geographic overlap region.
+            """Crop both panes to the geographic bounding box they share.
 
-            Requires both images to be loaded with geolocation and to
-            have a geographic overlap.  Does nothing otherwise.
+            Computes the lat/lon intersection of both images' footprints,
+            then for each pane independently converts that bounding box back
+            to pixel coordinates via ``geo.latlon_to_image()`` and re-reads
+            the chip from the original reader.
+
+            **Important:** this is a *viewport crop*, not coregistration.
+            Each image remains in its native sensor coordinate system
+            (slant range / azimuth). Pixel grids are not resampled,
+            reprojected, or geometrically aligned.  For pixel-level
+            coregistration use an appropriate InSAR / change-detection tool
+            (e.g. ISCE, SNAP, grdl interferometric processing).
             """
             overlap = self._sync_controller.get_overlap()
             if overlap is None:
@@ -1011,6 +1026,8 @@ if _QT_AVAILABLE:
 
         def _on_sync_mode_changed(self, mode: str) -> None:
             self._sync_controller.set_sync_mode(mode)
+            # Mirror mode into the coordinate bar: "geo" → lat/lon primary
+            self._coord_bar.set_coord_mode("geo" if mode == "geo" else "pixel")
 
         # --- Active pane tracking ---
 
