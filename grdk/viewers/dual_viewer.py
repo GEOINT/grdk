@@ -95,7 +95,7 @@ def compute_geo_bounds(
     for r, c in corners:
         try:
             result = geolocation.image_to_latlon(r, c)
-            if isinstance(result, tuple) and len(result) >= 2:
+            if result is not None and len(result) >= 2:
                 lats.append(float(result[0]))
                 lons.append(float(result[1]))
         except Exception:
@@ -944,28 +944,63 @@ if _QT_AVAILABLE:
                     continue
 
                 try:
-                    # Convert geographic bounds to pixel bounds
-                    corners_lat = [lat_min, lat_min, lat_max, lat_max]
-                    corners_lon = [lon_min, lon_max, lon_min, lon_max]
+                    # Convert geographic bounds to pixel bounds.
+                    # Sample a 5×5 grid across the overlap bbox instead of
+                    # only the 4 corners.  SAR geolocation interpolators
+                    # (LinearNDInterpolator) return NaN for points outside
+                    # the annotation grid's convex hull, which often includes
+                    # the bbox corners.  Interior grid points are almost
+                    # always within hull and give valid results.
+                    import numpy as _np
+                    grid_n = 5
+                    lats = _np.linspace(lat_min, lat_max, grid_n)
+                    lons = _np.linspace(lon_min, lon_max, grid_n)
                     pixel_rows, pixel_cols = [], []
-                    for lat, lon in zip(corners_lat, corners_lon):
-                        result = geo.latlon_to_image(lat, lon)
-                        if isinstance(result, tuple) and len(result) >= 2:
-                            pixel_rows.append(int(result[0]))
-                            pixel_cols.append(int(result[1]))
+                    for lat in lats:
+                        for lon in lons:
+                            result = geo.latlon_to_image(lat, lon)
+                            if result is None or len(result) < 2:
+                                continue
+                            r, c = float(result[0]), float(result[1])
+                            if _np.isnan(r) or _np.isnan(c):
+                                continue
+                            pixel_rows.append(int(r))
+                            pixel_cols.append(int(c))
 
-                    if len(pixel_rows) < 4:
+                    if not pixel_rows:
+                        _log.warning(
+                            "crop_to_overlap: all latlon_to_image calls returned "
+                            "NaN for this pane, skipping crop"
+                        )
                         continue
 
+                    shape = reader.get_shape()
                     r0 = max(0, min(pixel_rows))
-                    r1 = max(pixel_rows)
+                    r1 = min(shape[0], max(pixel_rows))
                     c0 = max(0, min(pixel_cols))
-                    c1 = max(pixel_cols)
+                    c1 = min(shape[1], max(pixel_cols))
 
-                    # Read the overlap chip
+                    if r1 <= r0 or c1 <= c0:
+                        _log.warning(
+                            "crop_to_overlap: degenerate pixel bounds "
+                            "r(%d,%d) c(%d,%d), skipping", r0, r1, c0, c1
+                        )
+                        continue
+
+                    # Read the overlap chip, wrapping the geolocation so that
+                    # chip-local pixel (0,0) maps correctly to full-image
+                    # pixel (r0, c0) rather than (0,0).
                     chip = reader.read_chip(r0, r1, c0, c1)
-                    viewer.set_array(chip, geolocation=geo)
+                    from grdl.geolocation.chip import ChipGeolocation
+                    chip_geo = ChipGeolocation(
+                        geo,
+                        row_offset=r0,
+                        col_offset=c0,
+                        shape=chip.shape[:2],
+                    )
+                    viewer.set_array(chip, geolocation=chip_geo)
                 except Exception:
+                    _log.warning("crop_to_overlap: failed for pane", exc_info=True)
                     continue
 
             self._cropped = True

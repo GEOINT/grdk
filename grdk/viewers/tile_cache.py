@@ -503,6 +503,9 @@ if _QT_AVAILABLE:
 
             # Store the combined sample for on-demand percentile computation
             self._overview_sample = np.concatenate(samples)
+            if len(self._overview_sample) == 0:
+                self._log.warning("_sample_overview: no samples collected")
+                return
             self._log.info(
                 "_sample_overview: %d samples, %d pixels total",
                 len(samples), len(self._overview_sample),

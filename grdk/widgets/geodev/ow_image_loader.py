@@ -44,10 +44,12 @@ from orangewidget.widget import OWBaseWidget, Input, Output, Msg
 
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QDialog,
     QFileDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
 )
@@ -55,6 +57,28 @@ from PyQt6.QtCore import Qt
 
 # GRDK internal
 from grdk.widgets._signals import GrdkProjectSignal, ImageStack, StackMetadata
+
+
+class _FileOrDirDialog(QFileDialog):
+    """File dialog that accepts both image files and product directories."""
+
+    _FILTER = "All Supported (*.tif *.tiff *.ntf *.nitf *.hdf5 *.h5);;All Files (*)"
+
+    def __init__(self, parent):
+        super().__init__(parent, "Add Image or Product Directory")
+        self.setOption(QFileDialog.Option.DontUseNativeDialog)
+        self.setFileMode(QFileDialog.FileMode.ExistingFile)
+        self.setNameFilter(self._FILTER)
+        self.currentChanged.connect(
+            lambda p: self.selectFile(Path(p).name) if Path(p).is_dir() else None
+        )
+
+    def accept(self) -> None:
+        paths = self.selectedFiles()
+        if paths and Path(paths[0]).is_dir():
+            QDialog.accept(self)
+        else:
+            super().accept()
 
 
 class OWImageLoader(OWBaseWidget):
@@ -105,8 +129,12 @@ class OWImageLoader(OWBaseWidget):
         box.layout().addWidget(self._list_widget)
 
         # Buttons
-        btn_add = QPushButton("Add Images...", self)
-        btn_add.clicked.connect(self._on_add_images)
+        btn_add = QPushButton("Add...", self)
+        btn_add.setToolTip(
+            "Add image files or product directories "
+            "(Sentinel-1 .SAFE, BIOMASS, TerraSAR-X)"
+        )
+        btn_add.clicked.connect(self._on_add)
         box.layout().addWidget(btn_add)
 
         btn_remove = QPushButton("Remove Selected", self)
@@ -133,7 +161,13 @@ class OWImageLoader(OWBaseWidget):
             if project.image_paths:
                 self._load_files(project.image_paths)
 
-    def _on_add_images(self) -> None:
+    def _on_add(self) -> None:
+        """Add images or product directories via a unified file/directory dialog."""
+        dialog = _FileOrDirDialog(self)
+        if dialog.exec():
+            paths = dialog.selectedFiles()
+            if paths:
+                self._load_files(paths)
         """Add images via file dialog."""
         files, _ = QFileDialog.getOpenFileNames(
             self,
@@ -199,8 +233,13 @@ class OWImageLoader(OWBaseWidget):
 
             try:
                 reader = open_any(filepath)
-            except Exception:
+            except Exception as exc:
                 self.Warning.load_failed(Path(filepath).name)
+                QMessageBox.critical(
+                    self,
+                    "Failed to open image",
+                    f"Could not open:\n{filepath}\n\n{exc}",
+                )
                 continue
             if reader is not None:
                 self._readers.append(reader)

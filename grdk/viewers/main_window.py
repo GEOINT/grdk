@@ -33,6 +33,7 @@ Modified
 import argparse
 import logging
 import sys
+from pathlib import Path
 from typing import Any, Optional
 
 _log = logging.getLogger("grdk.main_window")
@@ -40,6 +41,7 @@ _log = logging.getLogger("grdk.main_window")
 try:
     from PyQt6.QtWidgets import (
         QApplication,
+        QDialog,
         QDockWidget,
         QFileDialog,
         QGroupBox,
@@ -110,6 +112,38 @@ if _QT_AVAILABLE:
     _EXPORT_FILTER = (
         "PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp);;All Files (*)"
     )
+
+    class _FileOrDirDialog(QFileDialog):
+        """File dialog that accepts both image files and product directories.
+
+        Overrides the standard ``accept()`` so that when a directory is
+        the current selection (single-click) the dialog closes and returns
+        it, rather than navigating into it.  This lets users select
+        folder-structured formats (Sentinel-1 .SAFE, BIOMASS, TerraSAR-X)
+        from the same dialog as regular image files.
+        """
+
+        def __init__(self, parent, title: str, name_filter: str = ""):
+            super().__init__(parent, title)
+            self.setOption(QFileDialog.Option.DontUseNativeDialog)
+            self.setFileMode(QFileDialog.FileMode.ExistingFile)
+            if name_filter:
+                self.setNameFilter(name_filter)
+            # Populate the filename field when a directory is clicked so
+            # the built-in "Open" button becomes enabled.
+            self.currentChanged.connect(self._on_current_changed)
+
+        def _on_current_changed(self, path: str) -> None:
+            if Path(path).is_dir():
+                self.selectFile(Path(path).name)
+
+        def accept(self) -> None:
+            paths = self.selectedFiles()
+            if paths and Path(paths[0]).is_dir():
+                # Accept the directory directly instead of navigating into it.
+                QDialog.accept(self)
+            else:
+                super().accept()
 
     class ViewerMainWindow(QMainWindow):
         """Top-level geospatial image viewer application window.
@@ -363,13 +397,9 @@ if _QT_AVAILABLE:
 
         def _create_actions(self) -> None:
             """Create menu/toolbar actions."""
-            self._open_action = QAction("&Open Image...", self)
+            self._open_action = QAction("&Open...", self)
             self._open_action.setShortcut(QKeySequence.StandardKey.Open)
             self._open_action.triggered.connect(self._on_open)
-
-            self._open_dir_action = QAction("Open &Directory...", self)
-            self._open_dir_action.setShortcut(QKeySequence("Ctrl+Shift+O"))
-            self._open_dir_action.triggered.connect(self._on_open_dir)
 
             self._open_left_action = QAction(
                 "Open in &Left Pane...", self,
@@ -378,28 +408,12 @@ if _QT_AVAILABLE:
             self._open_left_action.triggered.connect(self._on_open_left)
             self._open_left_action.setEnabled(False)
 
-            self._open_left_dir_action = QAction(
-                "Open Directory in Left Pane...", self,
-            )
-            self._open_left_dir_action.triggered.connect(
-                self._on_open_left_dir,
-            )
-            self._open_left_dir_action.setEnabled(False)
-
             self._open_right_action = QAction(
                 "Open in &Right Pane...", self,
             )
             self._open_right_action.setShortcut(QKeySequence("Ctrl+Shift+R"))
             self._open_right_action.triggered.connect(self._on_open_right)
             self._open_right_action.setEnabled(False)
-
-            self._open_right_dir_action = QAction(
-                "Open Directory in Right Pane...", self,
-            )
-            self._open_right_dir_action.triggered.connect(
-                self._on_open_right_dir,
-            )
-            self._open_right_dir_action.setEnabled(False)
 
             self._load_vector_action = QAction("Load &GeoJSON...", self)
             self._load_vector_action.setShortcut(QKeySequence("Ctrl+G"))
@@ -475,13 +489,9 @@ if _QT_AVAILABLE:
             """Build the menu bar."""
             file_menu = self.menuBar().addMenu("&File")
             file_menu.addAction(self._open_action)
-            file_menu.addAction(self._open_dir_action)
             file_menu.addSeparator()
             file_menu.addAction(self._open_left_action)
-            file_menu.addAction(self._open_left_dir_action)
-            file_menu.addSeparator()
             file_menu.addAction(self._open_right_action)
-            file_menu.addAction(self._open_right_dir_action)
             file_menu.addSeparator()
             file_menu.addAction(self._load_vector_action)
             file_menu.addSeparator()
@@ -518,7 +528,6 @@ if _QT_AVAILABLE:
             self.addToolBar(self._toolbar)
 
             self._toolbar.addAction(self._open_action)
-            self._toolbar.addAction(self._open_dir_action)
             self._toolbar.addAction(self._load_vector_action)
             self._toolbar.addSeparator()
             self._toolbar.addAction(self._fit_action)
@@ -900,29 +909,12 @@ if _QT_AVAILABLE:
         # --- Slots ---
 
         def _on_open(self) -> None:
-            """Handle File > Open Image.
-
-            Resets to single mode, clears the right pane, loads into the
-            left pane, then offers dual view for multiband images.
-            """
-            filepath, _ = QFileDialog.getOpenFileName(
-                self, "Open Image", "", _IMAGE_FILTER,
-            )
-            if filepath:
-                self._open_fresh(filepath)
-
-        def _on_open_dir(self) -> None:
-            """Handle File > Open Directory.
-
-            Resets to single mode, clears the right pane, loads into the
-            left pane, then offers dual view for multiband images.
-            """
-            dirpath = QFileDialog.getExistingDirectory(
-                self, "Open Image Directory", "",
-                QFileDialog.Option.ShowDirsOnly,
-            )
-            if dirpath:
-                self._open_fresh(dirpath)
+            """Handle File > Open — accepts both image files and product directories."""
+            dialog = _FileOrDirDialog(self, "Open Image or Product Directory", _IMAGE_FILTER)
+            if dialog.exec():
+                paths = dialog.selectedFiles()
+                if paths:
+                    self._open_fresh(paths[0])
 
         def _open_fresh(self, filepath: str) -> None:
             """Reset to single mode, clear right pane, and open a file.
@@ -937,38 +929,20 @@ if _QT_AVAILABLE:
             self._offer_dual_for_multiband(filepath)
 
         def _on_open_left(self) -> None:
-            """Handle File > Open in Left Pane."""
-            filepath, _ = QFileDialog.getOpenFileName(
-                self, "Open Image (Left Pane)", "", _IMAGE_FILTER,
-            )
-            if filepath:
-                self.open_file(filepath, pane=0)
-
-        def _on_open_left_dir(self) -> None:
-            """Handle File > Open Directory in Left Pane."""
-            dirpath = QFileDialog.getExistingDirectory(
-                self, "Open Image Directory (Left Pane)", "",
-                QFileDialog.Option.ShowDirsOnly,
-            )
-            if dirpath:
-                self.open_file(dirpath, pane=0)
+            """Handle File > Open in Left Pane — accepts files and directories."""
+            dialog = _FileOrDirDialog(self, "Open in Left Pane", _IMAGE_FILTER)
+            if dialog.exec():
+                paths = dialog.selectedFiles()
+                if paths:
+                    self.open_file(paths[0], pane=0)
 
         def _on_open_right(self) -> None:
-            """Handle File > Open in Right Pane."""
-            filepath, _ = QFileDialog.getOpenFileName(
-                self, "Open Image (Right Pane)", "", _IMAGE_FILTER,
-            )
-            if filepath:
-                self.open_file(filepath, pane=1)
-
-        def _on_open_right_dir(self) -> None:
-            """Handle File > Open Directory in Right Pane."""
-            dirpath = QFileDialog.getExistingDirectory(
-                self, "Open Image Directory (Right Pane)", "",
-                QFileDialog.Option.ShowDirsOnly,
-            )
-            if dirpath:
-                self.open_file(dirpath, pane=1)
+            """Handle File > Open in Right Pane — accepts files and directories."""
+            dialog = _FileOrDirDialog(self, "Open in Right Pane", _IMAGE_FILTER)
+            if dialog.exec():
+                paths = dialog.selectedFiles()
+                if paths:
+                    self.open_file(paths[0], pane=1)
 
         def _on_toggle_dual(self, checked: bool) -> None:
             """Handle View > Dual View toggle."""
@@ -982,9 +956,7 @@ if _QT_AVAILABLE:
             _log.info("Mode changed: %s", mode)
             is_dual = mode == "dual"
             self._open_left_action.setEnabled(is_dual)
-            self._open_left_dir_action.setEnabled(is_dual)
             self._open_right_action.setEnabled(is_dual)
-            self._open_right_dir_action.setEnabled(is_dual)
             if is_dual:
                 self._left_display_dock.setWindowTitle("Display (Left)")
                 self._right_display_dock.show()
@@ -1012,18 +984,14 @@ if _QT_AVAILABLE:
             if right._reader is not None or right.canvas.source_array is not None:
                 return
 
-            # Re-open the file from disk (never share reader objects)
+            # Re-open the file from disk (never share reader objects).
+            # Use the window-level open_file so that _configure_sentinel1
+            # fires and the user is prompted for swath selection.
             if left._reader is not None:
                 filepath = getattr(left._reader, 'filepath', None)
                 _log.info("_populate_right_pane_if_empty: filepath=%s", filepath)
                 if filepath is not None:
-                    try:
-                        self._viewer.open_file(str(filepath), pane=1)
-                        self._update_remap_state()
-                        self._sync_display_controls(1)
-                        self._update_colorbar_state(1)
-                    except Exception:
-                        pass
+                    self.open_file(str(filepath), pane=1)
 
         def _on_active_pane_changed(self, pane: int) -> None:
             """Handle active pane switch — refresh metadata and remap."""

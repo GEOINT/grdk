@@ -430,12 +430,15 @@ if _QT_AVAILABLE:
             geolocation : Geolocation, optional
                 Geolocation model for coordinate display.
             """
-            if self._reader is not None:
-                try:
-                    self._reader.close()
-                except Exception:
-                    pass
-                self._reader = None
+            # Keep a reference to the old reader but don't close it yet.
+            # _canvas.set_array() calls _clear_tiles() which calls
+            # TileCache.clear(), incrementing the generation counter so
+            # in-flight workers discard their results.  Only after that
+            # is it safe to close the reader — otherwise a worker thread
+            # can call read_chip() on an already-closed file handle,
+            # causing a pthread_mutex_lock assertion crash.
+            old_reader = self._reader
+            self._reader = None
 
             self._geolocation = geolocation
             self._metadata = None
@@ -453,7 +456,16 @@ if _QT_AVAILABLE:
                 self._band_info = [BandInfo(0, "Band 0", "")]
             self.band_info_changed.emit(self._band_info)
 
+            # _clear_tiles() inside here increments TileCache generation,
+            # making all in-flight workers discard their results.
             self._canvas.set_array(arr)
+
+            # Now safe to close: no worker will call read_chip() any more.
+            if old_reader is not None:
+                try:
+                    old_reader.close()
+                except Exception:
+                    pass
 
             # Fit image in view on load
             self._canvas.fit_in_view()
