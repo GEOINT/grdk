@@ -29,7 +29,7 @@ Modified
 2026-02-06
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "Claude Code (Anthropic)"
 
 
@@ -54,3 +54,4 @@ def imshow(arr, *, geolocation=None, title=None, block=True):
 
 
 __all__: list = ["show", "imshow"]
+

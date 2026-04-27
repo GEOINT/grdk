@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "grdk"
-version = "0.1.0"
+version = "0.1.1"
 description = "GEOINT Rapid Development Kit — GUI tooling for CUDA-optimized image processing workflow orchestration"
 readme = "README.md"
 license = {text = "MIT"}
@@ -30,7 +30,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.20",
     "scipy>=1.7",
-    "grdl-runtime>=0.1.0",
+    "grdl-runtime>=0.1.2",
     "PyQt6>=6.5",
     "orange3>=3.36",
     "orange-widget-base",
@@ -65,3 +65,4 @@ include = ["grdk*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+
