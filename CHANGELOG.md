@@ -6,6 +6,16 @@ All notable changes to GRDK are documented in this file.
 
 ### Added
 
+#### File > Show File Metadata (`Ctrl+M`)
+- New menu action in `ViewerMainWindow`: displays full image metadata for the
+  loaded file as pretty-printed JSON in a resizable, copyable dialog.
+- Content: source file path, all `ImageMetadata` fields (`format`, `rows`,
+  `cols`, `bands`, `dtype`, `crs`, extras), plus geolocation type and bounds
+  when available.
+- In dual mode, a pane-selection prompt appears when both panes have files
+  loaded; if only one pane has data the dialog opens immediately.
+- Action is disabled until at least one pane has a file open.
+
 #### Architectural Refactor — Polarization, Reader Dispatch & Pauli Idempotency
 - `_pol_utils._reader_polarization()` now handles all sensor families in one place:
   Sentinel-1 SLC (`swath_info.polarization`), TerraSAR-X (`_requested_polarization`
