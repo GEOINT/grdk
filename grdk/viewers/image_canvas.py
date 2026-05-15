@@ -257,7 +257,7 @@ def normalize_array(
 
     is_rgb = arr.ndim == 3
 
-    # Remap path: SAR-specific remap functions (from grdl_sartoolbox)
+    # Remap path: SAR-specific contrast operators (from grdl.contrast)
     # replace the standard window/level/percentile pipeline but
     # contrast, brightness, and gamma are still applied on top.
     # Remap functions expect 2D (H, W) input.
@@ -265,7 +265,10 @@ def normalize_array(
         try:
             arr = settings.remap_function(arr)
             if arr.dtype != np.uint8:
-                arr = np.clip(arr, 0, 255).astype(np.uint8)
+                if np.issubdtype(arr.dtype, np.floating):
+                    arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+                else:
+                    arr = np.clip(arr, 0, 255).astype(np.uint8)
             # Apply contrast, brightness, gamma on the remap output
             arr = arr.astype(np.float64) / 255.0
             if settings.contrast != 1.0 or settings.brightness != 0.0:

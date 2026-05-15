@@ -64,15 +64,25 @@ ALL_CONTROLS = (
     'gamma', 'colormap', 'colorbar', 'band',
 )
 
-# Discover available SAR remap functions
+# SAR remap operators from grdl.contrast.
+# Each value is a contrast class instance; .apply is stored as remap_function.
 _REMAP_FUNCTIONS: dict = {}
 try:
-    from grdl_sartoolbox.visualization.remap import (
-        get_remap_list,
-        get_remap_function,
+    from grdl.contrast import (
+        MangisDensity, Brighter, Darker, HighContrast, PEDF,
+        NRLStretch, LogStretch, LinearStretch, ToDecibels,
     )
-    for _name in get_remap_list():
-        _REMAP_FUNCTIONS[_name] = get_remap_function(_name)
+    _REMAP_FUNCTIONS = {
+        'Density':       MangisDensity(),
+        'Brighter':      Brighter(),
+        'Darker':        Darker(),
+        'High Contrast': HighContrast(),
+        'PEDF':          PEDF(),
+        'NRL':           NRLStretch(),
+        'Log':           LogStretch(),
+        'Decibels':      ToDecibels(),
+        'Linear':        LinearStretch(),
+    }
 except ImportError:
     pass
 
@@ -142,7 +152,7 @@ def build_display_controls(
         if 'remap' in controls:
             remap_name = controls['remap'].currentData()
             if remap_name and remap_name in _REMAP_FUNCTIONS:
-                s = replace(s, remap_function=_REMAP_FUNCTIONS[remap_name])
+                s = replace(s, remap_function=_REMAP_FUNCTIONS[remap_name].apply)
             else:
                 s = replace(s, remap_function=None)
 
@@ -156,7 +166,7 @@ def build_display_controls(
         canvas.set_display_settings(s)
 
     # --- SAR Remap ---
-    if 'remap' in visible and _REMAP_FUNCTIONS:
+    if 'remap' in visible:
         row = QHBoxLayout()
         remap_label = QLabel("Remap:", group)
         row.addWidget(remap_label)
@@ -164,7 +174,7 @@ def build_display_controls(
         remap_combo = QComboBox(group)
         remap_combo.addItem("None (Standard)", "")
         for name in _REMAP_FUNCTIONS:
-            remap_combo.addItem(name.title(), name)
+            remap_combo.addItem(name, name)
         remap_combo.currentIndexChanged.connect(lambda _: _update())
         row.addWidget(remap_combo)
 

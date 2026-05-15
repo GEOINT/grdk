@@ -522,24 +522,6 @@ if _QT_AVAILABLE:
             # Pre-compute stats for NRL remap (99th percentile)
             self._global_p99 = float(np.nanpercentile(self._overview_sample, 99))
 
-            # Pre-compute stats for log remap
-            g_mean = self._global_mean or 1.0
-            log_A = self._overview_sample.copy()
-            if g_mean > 0:
-                log_A = 10.0 * log_A / g_mean
-            self._log_shift = max(1.0 - float(np.nanmin(log_A)), 0.0)
-            log_A = log_A + self._log_shift
-            log_x = 20.0 * np.log10(np.maximum(log_A, 1e-10))
-            self._log_rcent = 10.0 * np.log10(
-                max(float(np.nanmean(log_A ** 2)), 1e-10),
-            )
-            self._log_dmin = max(
-                float(np.nanmin(log_x)), self._log_rcent - 25.0,
-            )
-            self._log_dmax = min(
-                float(np.nanmax(log_x)), self._log_rcent + 25.0,
-            )
-
         def _get_global_percentiles(self, lo: float, hi: float) -> Optional[Tuple[float, float]]:
             """Compute exact percentiles from the stored overview sample.
 
@@ -707,92 +689,39 @@ if _QT_AVAILABLE:
             if fn is None:
                 return settings
 
+            # fn is instance.apply (bound method) — recover the contrast instance
+            instance = getattr(fn, '__self__', None)
+            if instance is None:
+                return settings
+
             global_mean = self._global_mean
             wrapped = None
 
             try:
-                from grdl_sartoolbox.visualization.remap import (
-                    amplitude_to_density,
-                    density_remap,
-                    brighter_remap,
-                    darker_remap,
-                    high_contrast_remap,
-                    pedf_remap,
-                    log_remap,
-                    nrl_remap,
-                )
+                from grdl.contrast import MangisDensity, NRLStretch, LogStretch
+                from grdl.contrast.density import PEDF
 
-                # Map each density-variant remap to its a2d parameters
-                if fn is density_remap:
+                # MangisDensity subclasses (Density/Brighter/Darker/HighContrast)
+                # and PEDF all accept data_mean kwarg for cross-tile consistency.
+                if isinstance(instance, (MangisDensity, PEDF)):
+                    _inst = instance
+                    _gm = global_mean
                     def wrapped(data: np.ndarray) -> np.ndarray:
-                        return np.clip(amplitude_to_density(
-                            data, dmin=30, mmult=40, data_mean=global_mean
-                        ), 0, 255).astype(np.uint8)
-                elif fn is brighter_remap:
+                        return _inst.apply(data, data_mean=_gm)
+
+                elif isinstance(instance, NRLStretch):
+                    _inst = instance
+                    _stats = (self._global_min, self._global_max, self._global_p99)
                     def wrapped(data: np.ndarray) -> np.ndarray:
-                        return np.clip(amplitude_to_density(
-                            data, dmin=60, mmult=40, data_mean=global_mean
-                        ), 0, 255).astype(np.uint8)
-                elif fn is darker_remap:
+                        return _inst.apply(data, stats=_stats)
+
+                elif isinstance(instance, LogStretch):
+                    _inst = instance
+                    _mn = self._global_min
+                    _mx = self._global_max
                     def wrapped(data: np.ndarray) -> np.ndarray:
-                        return np.clip(amplitude_to_density(
-                            data, dmin=0, mmult=40, data_mean=global_mean
-                        ), 0, 255).astype(np.uint8)
-                elif fn is high_contrast_remap:
-                    def wrapped(data: np.ndarray) -> np.ndarray:
-                        return np.clip(amplitude_to_density(
-                            data, dmin=30, mmult=4, data_mean=global_mean
-                        ), 0, 255).astype(np.uint8)
-                elif fn is pedf_remap:
-                    def wrapped(data: np.ndarray) -> np.ndarray:
-                        D = amplitude_to_density(
-                            data, data_mean=global_mean,
-                        )
-                        D[D > 128] = 0.5 * (D[D > 128] + 128.0)
-                        return np.clip(D, 0, 255).astype(np.uint8)
-                elif fn is log_remap:
-                    # Use fully precomputed global log stats
-                    g_mean = global_mean
-                    g_shift = self._log_shift
-                    g_ldmin = self._log_dmin
-                    g_ldmax = self._log_dmax
-                    def wrapped(data: np.ndarray) -> np.ndarray:
-                        A = np.abs(data).astype(np.float32)
-                        if g_mean > 0:
-                            A = 10.0 * A / g_mean
-                        A = A + g_shift
-                        x = 20.0 * np.log10(np.maximum(A, 1e-10))
-                        if g_ldmax > g_ldmin:
-                            out = 255.0 * (x - g_ldmin) / (g_ldmax - g_ldmin)
-                        else:
-                            out = np.zeros_like(x)
-                        return np.clip(out, 0, 255).astype(np.uint8)
-                elif fn is nrl_remap:
-                    g_amin = self._global_min
-                    g_amax = self._global_max
-                    g_p99 = self._global_p99
-                    def wrapped(data: np.ndarray) -> np.ndarray:
-                        A = np.abs(data).astype(np.float32)
-                        knee = 1.0 * g_p99  # a=1.0 default
-                        if knee <= g_amin or g_amax <= g_amin:
-                            return np.zeros(data.shape, dtype=np.uint8)
-                        c = 220.0
-                        log_d = np.log10(
-                            max((g_amax - g_amin) / (knee - g_amin), 1e-10),
-                        )
-                        b = (255.0 - c) / max(log_d, 1e-10)
-                        out = np.zeros(data.shape, dtype=np.float64)
-                        linear_mask = A <= knee
-                        out[linear_mask] = (
-                            (A[linear_mask] - g_amin) * c / (knee - g_amin)
-                        )
-                        log_mask = ~linear_mask
-                        ratio = (A[log_mask] - g_amin) / (knee - g_amin)
-                        out[log_mask] = (
-                            b * np.log10(np.maximum(ratio, 1e-10)) + c
-                        )
-                        return np.clip(out, 0, 255).astype(np.uint8)
-                # linear_remap doesn't need global stats (just magnitude)
+                        return _inst.apply(data, min_value=_mn, max_value=_mx)
+
             except ImportError:
                 pass
 
