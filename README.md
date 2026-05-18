@@ -99,6 +99,29 @@ grdk-viewer /path/to/image.tif       # open a file on startup
 grdk-viewer /path/to/product_dir     # open a product directory (SAFE, BIOMASS, etc.)
 ```
 
+If `grdk-viewer` is not found, install the package via pip:
+
+```bash
+pip install grdk
+
+# Or for an editable install from source:
+pip install -e /path/to/grdk
+```
+
+Once installed, the executable is placed in your Python environment's `bin/` directory:
+
+| Environment | Executable location |
+|-------------|---------------------|
+| Conda / virtualenv | `$CONDA_PREFIX/bin/grdk-viewer` or `$VIRTUAL_ENV/bin/grdk-viewer` |
+| User install (`--user`) | `~/.local/bin/grdk-viewer` |
+| System Python | `/usr/local/bin/grdk-viewer` |
+
+To find the exact path in your active environment:
+
+```bash
+which grdk-viewer
+```
+
 ### Supported Formats
 
 The viewer opens any format supported by [GRDL](../grdl)'s reader library:
@@ -158,12 +181,13 @@ Available from the **Tools** menu:
 | **Orthorectify** | Projects imagery onto a geographic grid. In dual mode, both panes are orthorectified to a shared output grid for geo-synced comparison. Supports SICD, BIOMASS, Sentinel-1, TerraSAR-X, NISAR, and GeoTIFF sources. |
 | **Combine to RGB** | Builds a false-color RGB composite from any combination of available bands/polarizations (e.g. HH→R, HV→G, VV→B). Includes derived channels like HH+VV and HH−VV. |
 
-### Export
+### File Actions
 
-| Action | Shortcut | Output |
-|--------|----------|--------|
-| **Export pane as image** | Ctrl+E | Saves the current pane view as PNG, JPEG, or BMP (screen capture) |
-| **Export data** | Ctrl+Shift+E | Saves processing results: ortho → GeoTIFF, RGB composite → TIFF / PNG / JPEG (full resolution) |
+| Action | Shortcut | Description |
+|--------|----------|-------------|
+| **Show File Metadata** | Ctrl+M | Displays full image metadata (source file path, format, dimensions, CRS, geolocation type and bounds, and all format-specific extras) as pretty-printed JSON in a copyable dialog. In dual mode, prompts which pane to inspect when both panes have files loaded. |
+| **Export pane as image** | Ctrl+E | Saves the current pane view as PNG, JPEG, or BMP (screen capture). |
+| **Export data** | Ctrl+Shift+E | Saves processing results: ortho → GeoTIFF, RGB composite → TIFF / PNG / JPEG (full resolution). |
 
 ### Programmatic API
 

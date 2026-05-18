@@ -31,6 +31,7 @@ Modified
 
 # Standard library
 import argparse
+import json
 import logging
 import sys
 from typing import Any, Optional
@@ -40,14 +41,19 @@ _log = logging.getLogger("grdk.main_window")
 try:
     from PyQt6.QtWidgets import (
         QApplication,
+        QDialog,
+        QDialogButtonBox,
         QDockWidget,
         QFileDialog,
         QGroupBox,
         QHeaderView,
+        QInputDialog,
         QMainWindow,
         QMessageBox,
+        QPushButton,
         QTableWidget,
         QTableWidgetItem,
+        QTextEdit,
         QToolBar,
         QVBoxLayout,
         QWidget,
@@ -578,6 +584,11 @@ if _QT_AVAILABLE:
             self._pauli_action.setEnabled(False)
             self._pauli_action.triggered.connect(self._on_pauli_decomp)
 
+            self._show_metadata_action = QAction("Show File &Metadata...", self)
+            self._show_metadata_action.setShortcut(QKeySequence("Ctrl+M"))
+            self._show_metadata_action.setEnabled(False)
+            self._show_metadata_action.triggered.connect(self._on_show_metadata)
+
         # --- Menus ---
 
         def _create_menus(self) -> None:
@@ -593,6 +604,8 @@ if _QT_AVAILABLE:
             file_menu.addAction(self._open_right_dir_action)
             file_menu.addSeparator()
             file_menu.addAction(self._load_vector_action)
+            file_menu.addSeparator()
+            file_menu.addAction(self._show_metadata_action)
             file_menu.addSeparator()
             file_menu.addAction(self._export_action)
             file_menu.addSeparator()
@@ -1428,6 +1441,15 @@ if _QT_AVAILABLE:
             # Pauli / H-Alpha: enabled when a multi-pol SAR image is loaded
             self._pauli_action.setEnabled(self._is_pol_capable())
 
+            # Show metadata: enabled when at least one pane has a reader
+            has_any_reader = any(
+                v._reader is not None
+                for v in (
+                    self._viewer.left_viewer, self._viewer.right_viewer
+                )
+            )
+            self._show_metadata_action.setEnabled(has_any_reader)
+
         # --- Pauli / H-Alpha Decomposition ---
 
         def _is_pol_capable(self) -> bool:
@@ -2020,7 +2042,7 @@ if _QT_AVAILABLE:
             from PyQt6.QtCore import Qt as _Qt
             QApplication.setOverrideCursor(_Qt.CursorShape.WaitCursor)
             try:
-                from grdl.image_processing.ortho import OrthoPipeline
+                from grdl.image_processing.ortho import OrthoBuilder
 
                 if source_arr is not None and reader is None:
                     _log.info(
@@ -2028,7 +2050,7 @@ if _QT_AVAILABLE:
                         source_arr.shape, source_arr.dtype,
                     )
                     result = (
-                        OrthoPipeline()
+                        OrthoBuilder()
                         .with_source_array(source_arr)
                         .with_geolocation(geo)
                         .with_interpolation('bilinear')
@@ -2056,7 +2078,7 @@ if _QT_AVAILABLE:
                         del data
 
                         result = (
-                            OrthoPipeline()
+                            OrthoBuilder()
                             .with_source_array(mag)
                             .with_metadata(reader.metadata)
                             .with_geolocation(geo)
@@ -2066,7 +2088,7 @@ if _QT_AVAILABLE:
                         del mag
                     else:
                         result = (
-                            OrthoPipeline()
+                            OrthoBuilder()
                             .with_reader(reader)
                             .with_geolocation(geo)
                             .with_interpolation('bilinear')
@@ -2131,7 +2153,7 @@ if _QT_AVAILABLE:
 
             QApplication.setOverrideCursor(_Qt.CursorShape.WaitCursor)
             try:
-                from grdl.image_processing.ortho import OrthoPipeline
+                from grdl.image_processing.ortho import OrthoBuilder
 
                 shape = reader.get_shape()
                 rows, cols = shape[0], shape[1]
@@ -2146,7 +2168,7 @@ if _QT_AVAILABLE:
                 del data
 
                 result = (
-                    OrthoPipeline()
+                    OrthoBuilder()
                     .with_source_array(mag)
                     .with_metadata(reader.metadata)
                     .with_geolocation(geo)
@@ -2210,7 +2232,7 @@ if _QT_AVAILABLE:
 
             QApplication.setOverrideCursor(_Qt.CursorShape.WaitCursor)
             try:
-                from grdl.image_processing.ortho import OrthoPipeline
+                from grdl.image_processing.ortho import OrthoBuilder
 
                 results = {}
                 output_grid = None
@@ -2244,7 +2266,7 @@ if _QT_AVAILABLE:
                         del data
 
                         pipeline = (
-                            OrthoPipeline()
+                            OrthoBuilder()
                             .with_source_array(mag)
                             .with_metadata(reader.metadata)
                             .with_geolocation(geo)
@@ -2257,7 +2279,7 @@ if _QT_AVAILABLE:
                         del mag
                     else:
                         pipeline = (
-                            OrthoPipeline()
+                            OrthoBuilder()
                             .with_reader(reader)
                             .with_geolocation(geo)
                             .with_interpolation('bilinear')
@@ -2483,6 +2505,100 @@ if _QT_AVAILABLE:
                 "No ortho or RGB results to export.\n"
                 "Run Orthorectify or Combine to RGB first.",
             )
+
+        def _on_show_metadata(self) -> None:
+            """Handle File > Show File Metadata.
+
+            Displays full image metadata for the selected pane as
+            pretty-printed JSON in a dialog.  When dual mode is active
+            and both panes have a file loaded, the user is prompted to
+            choose which pane's metadata to view.
+            """
+            from pathlib import Path
+            from PyQt6.QtGui import QFont
+
+            left_v = self._viewer.left_viewer
+            right_v = self._viewer.right_viewer
+            left_reader = left_v._reader
+            right_reader = right_v._reader
+
+            if (
+                self._viewer.mode == "dual"
+                and left_reader is not None
+                and right_reader is not None
+            ):
+                labels = ["Left pane", "Right pane"]
+                choice, ok = QInputDialog.getItem(
+                    self, "File Metadata",
+                    "Select pane:",
+                    labels, 0, False,
+                )
+                if not ok:
+                    return
+                viewer = left_v if choice == labels[0] else right_v
+                reader = left_reader if choice == labels[0] else right_reader
+            elif left_reader is not None:
+                viewer, reader = left_v, left_reader
+            elif right_reader is not None:
+                viewer, reader = right_v, right_reader
+            else:
+                QMessageBox.information(
+                    self, "No File Loaded",
+                    "No image is currently loaded.",
+                )
+                return
+
+            data: dict = {}
+            try:
+                data["source_file"] = str(reader.filepath)
+            except AttributeError:
+                pass
+
+            meta = viewer.metadata
+            if meta is not None:
+                try:
+                    data.update(meta.to_dict())
+                except Exception:
+                    data["metadata_error"] = "Could not serialize metadata"
+
+            geo = viewer.geolocation
+            if geo is not None:
+                data["geolocation_type"] = type(geo).__name__
+                try:
+                    bounds = geo.get_bounds()
+                    if bounds is not None:
+                        data["bounds"] = bounds
+                except Exception:
+                    pass
+
+            text = json.dumps(data, indent=2, default=str)
+            source = data.get("source_file", "")
+            title_name = Path(source).name if source else "File Metadata"
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle(f"Metadata \u2014 {title_name}")
+            dialog.resize(700, 500)
+            layout = QVBoxLayout(dialog)
+
+            edit = QTextEdit(dialog)
+            edit.setReadOnly(True)
+            edit.setPlainText(text)
+            mono = QFont("Monospace")
+            mono.setStyleHint(QFont.StyleHint.Monospace)
+            edit.setFont(mono)
+            layout.addWidget(edit)
+
+            buttons = QDialogButtonBox(dialog)
+            copy_btn = QPushButton("Copy to Clipboard")
+            copy_btn.clicked.connect(
+                lambda: QApplication.clipboard().setText(text)
+            )
+            buttons.addButton(copy_btn, QDialogButtonBox.ButtonRole.ActionRole)
+            close_btn = buttons.addButton(QDialogButtonBox.StandardButton.Close)
+            close_btn.clicked.connect(dialog.accept)
+            layout.addWidget(buttons)
+
+            dialog.exec()
 
         def _on_export(self) -> None:
             """Handle File > Export pane as image.
