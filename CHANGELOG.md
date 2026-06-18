@@ -6,6 +6,52 @@ All notable changes to GRDK are documented in this file.
 
 ### Added
 
+#### Code Quality & Testing Improvements (2026-06-18)
+- **Headless execution tests** (`tests/test_headless.py`) — validates command-line
+  workflow execution with numpy I/O, input/workflow validation
+- **Polarimetric processing tests** (`tests/test_widgets/test_polarimetric.py`) —
+  synthetic quad-pol data → T3 matrix → Pauli RGB decomposition with validation
+- **Polarization utilities tests** (`tests/test_pol_utils.py`) — comprehensive
+  coverage of `_reader_polarization()`, `channel_pol_map()`, strided reading,
+  co-pol/cross-pol splitting
+
+#### ImageStack Signal Enhancement
+- **Per-reader metadata tracking** — `ImageStack.reader_metadata` field (list of dicts)
+  stores polarization, swath ID, acquisition time, sensor per reader for robust
+  provenance tracking in multi-pol/multi-swath workflows
+- **`validate_image_stack()` function** in `_signals.py` — checks dimension
+  consistency, pixel spacing mismatches (>1% tolerance), duplicate polarizations,
+  acquisition time gaps (>1 minute warning), returns list of validation warnings
+
+#### OWOrchestrator Workflow Editor Enhancements
+- **Undo/Redo support** — command pattern implementation with persistent undo/redo
+  stacks for workflow step add/remove/reorder operations; Undo and Redo buttons
+  in control panel
+- **Real-time GPU status indicator** — dynamic display shows "GPU Active" (green)
+  vs "CPU Fallback" (orange) during preview execution, static "GPU Available" or
+  "CPU Only" when idle
+
+#### OWMetadataInspector Widget
+- **CPHD/CRSD phase history metadata viewer** — validates pulse parameters
+  (pulse_width, bandwidth, PRF), timeline metadata (num_vectors, collection_start/end),
+  channel descriptions; highlights suspicious values (negative pulse widths, excessive
+  PRF, timeline inconsistencies) in red
+- **JSON export** — full metadata export to file for external analysis
+- **Priority field display** — shows critical parameters first (format, dimensions,
+  pulse params) before remaining metadata
+
+#### Documentation
+- **`docs/polarimetric-workflows.md`** — comprehensive tutorial covering quad-pol
+  SAR → T3 coherency matrix → Pauli RGB decomposition with YAML workflow example,
+  validation checklist, common issues troubleshooting, physical interpretation of
+  Pauli components, C3 vs T3 comparison
+
+#### SAR Contrast Operators Migration
+- Migrated SAR contrast enhancement operators from `grdl_sartoolbox` to `grdl.contrast`
+- Display controls now import from canonical `grdl.contrast` module for log-scale, 
+  equalization, and histogram matching operators
+- Removes dependency on deprecated `grdl_sartoolbox` package
+
 #### File > Show File Metadata (`Ctrl+M`)
 - New menu action in `ViewerMainWindow`: displays full image metadata for the
   loaded file as pretty-printed JSON in a resizable, copyable dialog.
@@ -80,6 +126,9 @@ All notable changes to GRDK are documented in this file.
 - `CLAUDE.md` — updated development guide with all modules, patterns, and standards
 
 ### Changed
+- **OWOrchestrator** — removed deprecated `_array_to_pixmap()` function; replaced
+  QLabel-based thumbnail display with `ImageCanvasThumbnail` widgets for consistency
+  with ImageCanvas architecture
 - `_pol_utils._reader_polarization()` — unified sensor coverage; replaces all direct
   private-attribute accesses (`reader._requested_polarization`,
   `reader.metadata.swath_info`) that were scattered across `main_window.py`.

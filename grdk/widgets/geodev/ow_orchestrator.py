@@ -67,32 +67,7 @@ from grdl_rt.execution.discovery import discover_processors, get_processor_tags
 from grdl_rt.execution.gpu import GpuBackend
 from grdl_rt.execution.workflow import ProcessingStep, WorkflowDefinition
 from grdk.widgets._signals import ChipSetSignal, ProcessingPipelineSignal
-
-
-def _array_to_pixmap(arr: np.ndarray, size: int = 256) -> QPixmap:
-    """Convert numpy array to QPixmap for preview display."""
-    if np.iscomplexobj(arr):
-        arr = np.abs(arr)
-    arr = arr.astype(np.float64)
-    vmin, vmax = np.nanmin(arr), np.nanmax(arr)
-    if vmax > vmin:
-        arr = (arr - vmin) / (vmax - vmin) * 255.0
-    arr = np.clip(arr, 0, 255).astype(np.uint8)
-
-    if arr.ndim == 2:
-        h, w = arr.shape
-        qimg = QImage(arr.data, w, h, w, QImage.Format.Format_Grayscale8)
-    elif arr.ndim == 3 and arr.shape[2] >= 3:
-        arr = np.ascontiguousarray(arr[:, :, :3])
-        h, w, _ = arr.shape
-        qimg = QImage(arr.data, w, h, 3 * w, QImage.Format.Format_RGB888)
-    else:
-        band = arr[:, :, 0] if arr.ndim == 3 else arr
-        h, w = band.shape
-        qimg = QImage(band.data, w, h, w, QImage.Format.Format_Grayscale8)
-
-    pixmap = QPixmap.fromImage(qimg)
-    return pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio)
+from grdk.viewers.image_canvas import ImageCanvasThumbnail
 
 
 class OWOrchestrator(OWBaseWidget):
@@ -136,17 +111,36 @@ class OWOrchestrator(OWBaseWidget):
         self._preview_timer.setInterval(50)  # 50ms debounce
         self._preview_timer.timeout.connect(self._update_preview)
 
+        # Undo/redo stacks (command pattern)
+        self._undo_stack: List[Dict[str, Any]] = []
+        self._redo_stack: List[Dict[str, Any]] = []
+
         # --- Control area ---
         box = gui.vBox(self.controlArea, "Workflow")
         self._workflow_name_label = QLabel("Steps: 0", self)
         box.layout().addWidget(self._workflow_name_label)
 
+        # Undo/Redo buttons
+        undo_redo_row = QWidget()
+        undo_redo_row.setLayout(QHBoxLayout())
+        self._btn_undo = QPushButton("Undo")
+        self._btn_undo.clicked.connect(self._on_undo)
+        self._btn_undo.setEnabled(False)
+        self._btn_redo = QPushButton("Redo")
+        self._btn_redo.clicked.connect(self._on_redo)
+        self._btn_redo.setEnabled(False)
+        undo_redo_row.layout().addWidget(self._btn_undo)
+        undo_redo_row.layout().addWidget(self._btn_redo)
+        box.layout().addWidget(undo_redo_row)
+
         btn_emit = QPushButton("Emit Pipeline", self)
         btn_emit.clicked.connect(self._on_emit)
         box.layout().addWidget(btn_emit)
 
-        gpu_info = "GPU" if self._gpu.gpu_available else "CPU only"
-        box.layout().addWidget(QLabel(f"Compute: {gpu_info}", self))
+        # GPU status indicator
+        self._gpu_status_label = QLabel()
+        self._update_gpu_status_display()
+        box.layout().addWidget(self._gpu_status_label)
 
         # --- Main area: 3-panel splitter ---
         splitter = QSplitter(Qt.Orientation.Horizontal, self.mainArea)
@@ -232,14 +226,12 @@ class OWOrchestrator(OWBaseWidget):
 
         self._before_label = QLabel("Before")
         self._before_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._before_image = QLabel()
-        self._before_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._before_image = ImageCanvasThumbnail(size=256)
         self._before_image.setMinimumSize(128, 128)
 
         self._after_label = QLabel("After Pipeline")
         self._after_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._after_image = QLabel()
-        self._after_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._after_image = ImageCanvasThumbnail(size=256)
         self._after_image.setMinimumSize(128, 128)
 
         self._error_label = QLabel("")
@@ -285,9 +277,18 @@ class OWOrchestrator(OWBaseWidget):
             processor_name=proc_name,
             processor_version=version,
         )
+        idx = len(self._workflow.steps)
         self._workflow.add_step(step)
         self._steps_list.addItem(f"{len(self._workflow.steps)}. {proc_name}")
         self._workflow_name_label.setText(f"Steps: {len(self._workflow.steps)}")
+
+        # Record command for undo
+        self._record_command({
+            'action': 'add_step',
+            'index': idx,
+            'step': step,
+        })
+
         self._schedule_preview()
 
     def _on_remove_step(self) -> None:
@@ -295,6 +296,15 @@ class OWOrchestrator(OWBaseWidget):
         row = self._steps_list.currentRow()
         if row < 0 or row >= len(self._workflow.steps):
             return
+
+        step = self._workflow.steps[row]
+
+        # Record command for undo
+        self._record_command({
+            'action': 'remove_step',
+            'index': row,
+            'step': step,
+        })
 
         self._workflow.remove_step(row)
         self._rebuild_steps_list()
@@ -306,6 +316,13 @@ class OWOrchestrator(OWBaseWidget):
         if row <= 0:
             return
 
+        # Record command for undo
+        self._record_command({
+            'action': 'move_step',
+            'from_index': row,
+            'to_index': row - 1,
+        })
+
         self._workflow.move_step(row, row - 1)
         self._rebuild_steps_list()
         self._steps_list.setCurrentRow(row - 1)
@@ -316,6 +333,13 @@ class OWOrchestrator(OWBaseWidget):
         row = self._steps_list.currentRow()
         if row < 0 or row >= len(self._workflow.steps) - 1:
             return
+
+        # Record command for undo
+        self._record_command({
+            'action': 'move_step',
+            'from_index': row,
+            'to_index': row + 1,
+        })
 
         self._workflow.move_step(row, row + 1)
         self._rebuild_steps_list()
@@ -425,32 +449,156 @@ class OWOrchestrator(OWBaseWidget):
         source = chip.image_data.copy()
 
         # Show before
-        self._before_image.setPixmap(_array_to_pixmap(source))
+        self._before_image.set_array(source)
 
         if not self._workflow.steps:
-            self._after_image.setPixmap(_array_to_pixmap(source))
+            self._after_image.set_array(source)
             self._preview_running = False
             return
 
         # Run pipeline
         result = source.copy()
+        gpu_used = False
         try:
             for step in self._workflow.steps:
                 proc_class = self._processors.get(step.processor_name)
                 if proc_class is None:
                     continue
                 proc = proc_class()
+                # Check if GPU was used
+                is_compatible = getattr(proc_class, '__gpu_compatible__', True)
+                if is_compatible and self._gpu.gpu_available:
+                    gpu_used = True
                 result = self._gpu.apply_transform(proc, result, **step.params)
+
+            # Update GPU status based on actual usage
+            self._update_gpu_status_display(active=gpu_used)
+
         except Exception as e:
             logger.error("Preview pipeline failed: %s", e)
             self._error_label.setText(f"Error: {e}")
-            self._after_image.setPixmap(_array_to_pixmap(source))
+            self._after_image.set_array(source)
             self._preview_running = False
+            self._update_gpu_status_display(active=False)
             return
 
-        self._after_image.setPixmap(_array_to_pixmap(result))
+        self._after_image.set_array(result)
         self._preview_running = False
 
     def _on_emit(self) -> None:
         """Emit the current workflow as a ProcessingPipeline signal."""
         self.Outputs.pipeline.send(ProcessingPipelineSignal(self._workflow))
+
+    # -----------------------------------------------------------------------
+    # Undo/Redo Support (Command Pattern)
+    # -----------------------------------------------------------------------
+
+    def _record_command(self, command: Dict[str, Any]) -> None:
+        """Record a workflow modification command for undo.
+
+        Parameters
+        ----------
+        command : dict
+            Command dict with 'action' key and action-specific data.
+            Actions: 'add_step', 'remove_step', 'move_step', 'modify_param'
+        """
+        self._undo_stack.append(command)
+        self._redo_stack.clear()  # Clear redo on new action
+        self._update_undo_redo_buttons()
+
+    def _update_undo_redo_buttons(self) -> None:
+        """Enable/disable undo/redo buttons based on stack state."""
+        self._btn_undo.setEnabled(len(self._undo_stack) > 0)
+        self._btn_redo.setEnabled(len(self._redo_stack) > 0)
+
+    def _on_undo(self) -> None:
+        """Undo the last workflow modification."""
+        if not self._undo_stack:
+            return
+
+        command = self._undo_stack.pop()
+        action = command['action']
+
+        if action == 'add_step':
+            # Undo: remove the step that was added
+            idx = command['index']
+            step = self._workflow.steps[idx]
+            self._workflow.remove_step(idx)
+            # Record reverse command for redo
+            self._redo_stack.append({
+                'action': 'remove_step',
+                'index': idx,
+                'step': step,
+            })
+
+        elif action == 'remove_step':
+            # Undo: re-add the step that was removed
+            idx = command['index']
+            step = command['step']
+            self._workflow.steps.insert(idx, step)
+            self._redo_stack.append({
+                'action': 'add_step',
+                'index': idx,
+                'step': step,
+            })
+
+        elif action == 'move_step':
+            # Undo: move back
+            from_idx = command['from_index']
+            to_idx = command['to_index']
+            self._workflow.move_step(to_idx, from_idx)
+            self._redo_stack.append({
+                'action': 'move_step',
+                'from_index': to_idx,
+                'to_index': from_idx,
+            })
+
+        self._rebuild_steps_list()
+        self._update_undo_redo_buttons()
+        self._schedule_preview()
+
+    def _on_redo(self) -> None:
+        """Redo a previously undone workflow modification."""
+        if not self._redo_stack:
+            return
+
+        command = self._redo_stack.pop()
+        action = command['action']
+
+        if action == 'add_step':
+            # Redo: re-add the step
+            idx = command['index']
+            step = command['step']
+            self._workflow.steps.insert(idx, step)
+            self._undo_stack.append({
+                'action': 'add_step',
+                'index': idx,
+                'step': step,
+            })
+
+        elif action == 'remove_step':
+            # Redo: remove the step again
+            idx = command['index']
+            step = self._workflow.steps[idx]
+            self._workflow.remove_step(idx)
+            self._undo_stack.append({
+                'action': 'remove_step',
+                'index': idx,
+                'step': step,
+            })
+
+        elif action == 'move_step':
+            # Redo: move forward
+            from_idx = command['from_index']
+            to_idx = command['to_index']
+            self._workflow.move_step(from_idx, to_idx)
+            self._undo_stack.append({
+                'action': 'move_step',
+                'from_index': from_idx,
+                'to_index': to_idx,
+            })
+
+        self._rebuild_steps_list()
+        self._update_undo_redo_buttons()
+        self._schedule_preview()
+
