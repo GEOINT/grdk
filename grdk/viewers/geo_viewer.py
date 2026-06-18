@@ -222,12 +222,12 @@ def open_any(filepath: Union[str, Path]) -> Any:
 
         # 2. Generic formats (GeoTIFF, NITF, HDF5, JP2)
         try:
-            from grdl.IO import open_image
-            reader = open_image(path)
-            _log.info("open_any: opened via open_image → %s", type(reader).__name__)
+            from grdl.IO import open_reader
+            reader = open_reader(path)
+            _log.info("open_any: opened via open_reader → %s", type(reader).__name__)
             return reader
         except (ValueError, ImportError, Exception) as e:
-            _log.debug("open_any: open_image failed: %s", e)
+            _log.debug("open_any: open_reader failed: %s", e)
             errors.append(f"Image: {e}")
 
         # 3. EO-specific (Sentinel-2, etc.)

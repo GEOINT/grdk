@@ -63,10 +63,9 @@ from grdk.widgets._signals import GrdkProjectSignal, ImageStack
 def _try_open_reader(filepath: str):
     """Attempt to open a single image reader for *filepath*.
 
-    Tries multiple reader strategies in order:
-    1. GRDL open_sar() for SAR formats (SICD, CPHD, CRSD, SIDD, Sentinel-1)
-    2. GRDL BIOMASSL1Reader for BIOMASS directories
-    3. GRDL open_image() for generic formats (GeoTIFF, NITF, HDF5, JPEG2000)
+    Uses GRDL's factory pattern auto-detection (open_reader) which
+    handles all formats: SAR (SICD, CPHD, CRSD, SIDD, Sentinel-1),
+    BIOMASS directories, GeoTIFF, NITF, HDF5, JPEG2000, and more.
 
     Parameters
     ----------
@@ -78,24 +77,10 @@ def _try_open_reader(filepath: str):
     """
     path = Path(filepath)
 
-    # Try SAR formats first
+    # Use GRDL's factory pattern for auto-detection
     try:
-        from grdl.IO.sar import open_sar
-        return open_sar(str(path))
-    except Exception:
-        pass
-
-    # Try BIOMASS (directory product)
-    try:
-        from grdl.IO.sar import BIOMASSL1Reader
-        return BIOMASSL1Reader(str(path))
-    except Exception:
-        pass
-
-    # Generic fallback (GeoTIFF, NITF, HDF5, JPEG2000)
-    try:
-        from grdl.IO import open_image
-        return open_image(str(path))
+        from grdl.IO import open_reader
+        return open_reader(str(path))
     except Exception:
         pass
 

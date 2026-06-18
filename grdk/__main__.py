@@ -96,8 +96,8 @@ def main() -> int:
     try:
         from grdl.IO.base import ImageReader
         # Try GRDL readers first
-        from grdl.IO import open_image
-        reader = open_image(str(args.input_path))
+        from grdl.IO import open_reader
+        reader = open_reader(str(args.input_path))
         source = reader.read_full()
     except (ImportError, Exception):
         # Fall back to numpy load for .npy files
@@ -121,9 +121,9 @@ def main() -> int:
         np.save(str(args.output_path), wr.result)
     else:
         try:
-            from grdl.IO import open_writer
-            writer = open_writer(str(args.output_path))
-            writer.write(wr.result)
+            from grdl.IO import write
+            # Use GRDL's convenience write() function with auto-detection
+            write(wr.result, args.output_path)
         except (ImportError, Exception):
             np.save(str(args.output_path), wr.result)
 

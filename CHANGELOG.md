@@ -4,6 +4,21 @@ All notable changes to GRDK are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+#### GRDL Factory Pattern Modernization (2026-06-18)
+- **Migrated to GRDL's new registry-based IO factory pattern**
+  - Replaced deprecated `open_image()` → `open_reader()` (auto-detection with registry)
+  - Simplified `ow_image_loader._try_open_reader()` — now uses single `open_reader()`
+    call instead of cascading `open_sar()` → `BIOMASSL1Reader()` → `open_image()`
+  - Updated `geo_viewer.open_any()` to use `open_reader()` for generic formats
+  - Fixed `__main__.py` writer usage — replaced non-existent `open_writer()` with
+    `write()` convenience function (auto-detects format from extension)
+- **Eliminates deprecation warnings** — GRDL deprecated `open_image()` in favor of
+  factory-based `open_reader()` / `get_reader()` API
+- **Maintains full backward compatibility** — GRDL exports all specialized functions
+  (`open_sar`, `open_biomass`, etc.) and reader classes; old code still works
+
 ### Added
 
 #### Code Quality & Testing Improvements (2026-06-18)
