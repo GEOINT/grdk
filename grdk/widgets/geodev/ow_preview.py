@@ -201,7 +201,20 @@ class OWPreview(OWBaseWidget):
             if proc_class is None:
                 continue
             try:
-                proc = proc_class()
+                # Try to instantiate processor
+                # Some processors (e.g., CSIProcessor, SublookDecomposition)
+                # require metadata parameters that are not available in preview mode
+                try:
+                    proc = proc_class()
+                except TypeError as te:
+                    # Processor requires mandatory parameters we don't have
+                    logger.warning(
+                        "Preview skipping '%s': requires parameters not "
+                        "available in preview mode (%s)",
+                        step.processor_name, te
+                    )
+                    continue
+                
                 # Forward progress_callback for long-running processors
                 step_kwargs = dict(step.params)
                 result = self._gpu.apply_transform(proc, result, **step_kwargs)

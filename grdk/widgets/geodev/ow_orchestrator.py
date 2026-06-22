@@ -464,7 +464,21 @@ class OWOrchestrator(OWBaseWidget):
                 proc_class = self._processors.get(step.processor_name)
                 if proc_class is None:
                     continue
-                proc = proc_class()
+                
+                # Try to instantiate processor
+                # Some processors (e.g., CSIProcessor, SublookDecomposition)
+                # require metadata parameters that are not available in preview mode
+                try:
+                    proc = proc_class()
+                except TypeError as te:
+                    # Processor requires mandatory parameters we don't have
+                    logger.warning(
+                        "Preview skipping '%s': requires parameters not "
+                        "available in preview mode (%s)",
+                        step.processor_name, te
+                    )
+                    continue
+                
                 # Check if GPU was used
                 is_compatible = getattr(proc_class, '__gpu_compatible__', True)
                 if is_compatible and self._gpu.gpu_available:
