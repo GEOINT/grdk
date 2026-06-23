@@ -16,26 +16,41 @@ GRDK now supports interactive polygon drawing on the viewer canvas for creating 
    - The cursor changes to a crosshair
    - Status bar shows: "Drawing Mode: Click to add vertex | Double-click or Enter to close | Esc to cancel"
 
-3. **Draw a Polygon**
+3. **Draw Polygons**
    - **Left-click** to add each vertex
    - A yellow circle marks each vertex
    - A dashed line previews from the last vertex to your cursor
    - **Double-click** or press **Enter** to close the polygon
    - Press **Escape** to cancel and discard the current polygon
 
-4. **Export to GeoJSON**
+4. **Select and Edit Polygons**
+   - **Exit Drawing Mode**: Press `D` again to toggle off drawing mode
+   - The cursor returns to normal arrow
+   - Status bar shows: "Selection Mode: Click polygon to select | Delete to remove | Ctrl+Z to undo | Ctrl+Y to redo"
+   - **Click** on any polygon to select it (it will highlight)
+   - Press **Delete** to remove selected polygon(s)
+   - Press **Ctrl+Z** to undo the last polygon (works in any mode)
+   - Press **Ctrl+Y** to redo the last deletion
+   - You can select multiple polygons and delete them all at once
+
+5. **Export to GeoJSON**
    - Tools → "Export Polygons as GeoJSON..."
    - Polygons are automatically converted to geographic coordinates (lat/lon) if geolocation is available
    - Falls back to pixel coordinates if no geolocation is available
 
-5. **Clear Polygons**
-   - Tools → "Clear Polygons" to remove all drawn polygons from the active pane
+6. **Clear All Polygons**
+   - Tools → "Clear All Polygons" to remove all drawn polygons from the active pane
 
 ### Important Notes
 
+- **Two Modes**: Drawing mode (polygons not selectable) vs. Selection mode (polygons selectable)
+  - **Drawing Mode**: Press `D` to toggle on — cursor is crosshair, click adds vertices, polygons cannot be selected
+  - **Selection Mode**: Press `D` to toggle off — cursor is arrow, click selects polygons, can delete with Delete key
+  - This prevents accidental selection while drawing and allows layered/overlapping polygons
+- **Undo/Redo**: Ctrl+Z undoes the last polygon, Ctrl+Y redoes the last deletion (works in both modes)
 - **GeoJSON Import Not Yet Implemented**: The current version only supports **export**. To edit existing polygons, you'll need to redraw them manually. GeoJSON import is planned for a future release.
 - **Double-click to close**: If double-click doesn't work reliably, use the **Enter** key instead to close the polygon
-- **Rubber-band preview**: A dashed yellow line should show from your last vertex to the cursor position while drawing
+- **Rubber-band preview**: A dashed yellow line shows from your last vertex to the cursor position while drawing
 
 ### Programmatic Usage
 
@@ -48,13 +63,28 @@ import numpy as np
 canvas = ImageCanvas()
 canvas.set_array(my_image_array)
 
-# Enter drawing mode
+# Enter drawing mode (polygons become non-selectable)
 canvas.enter_polygon_mode()
 
 # ... user draws polygons interactively ...
 
+# Exit drawing mode (polygons become selectable)
+canvas.exit_polygon_mode()
+
 # Get completed polygons
 polygons = canvas.get_completed_polygons()  # List[np.ndarray]
+
+# Undo last polygon
+if canvas.undo_last_polygon():
+    print("Removed last polygon")
+
+# Redo last deletion
+if canvas.redo_last_deletion():
+    print("Restored last deleted polygon")
+
+# Delete selected polygons
+num_deleted = canvas.delete_selected_polygons()
+print(f"Deleted {num_deleted} polygon(s)")
 
 # Export to GeoJSON
 export_polygons_to_geojson(
@@ -65,11 +95,8 @@ export_polygons_to_geojson(
     label_class="roi",
 )
 
-# Clear all polygons
+# Clear all polygons (also clears redo stack)
 canvas.clear_all_polygons()
-
-# Exit drawing mode
-canvas.exit_polygon_mode()
 ```
 
 ## GeoJSON Schema

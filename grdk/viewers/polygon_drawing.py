@@ -65,6 +65,8 @@ if _QT_AVAILABLE:
             Preview line from last vertex to mouse cursor.
         polygon_items : List[QGraphicsPolygonItem]
             Rendered completed polygons.
+        deleted_stack : List[Tuple[np.ndarray, QGraphicsPolygonItem, Any]]
+            Stack of deleted polygons for redo (vertices, item, scene).
         """
 
         active: bool = False
@@ -73,6 +75,7 @@ if _QT_AVAILABLE:
         vertex_items: List[QGraphicsEllipseItem] = field(default_factory=list)
         rubber_band_item: Optional[QGraphicsLineItem] = None
         polygon_items: List[QGraphicsPolygonItem] = field(default_factory=list)
+        deleted_stack: List[Tuple[np.ndarray, QGraphicsPolygonItem]] = field(default_factory=list)
 
         def clear_active_drawing(self) -> None:
             """Clear the current in-progress polygon."""
@@ -96,9 +99,10 @@ if _QT_AVAILABLE:
                 if scene is not None:
                     scene.removeItem(item)
             self.polygon_items.clear()
+            self.deleted_stack.clear()  # Clear redo stack
         
         def remove_last_polygon(self) -> bool:
-            """Remove the most recently added polygon.
+            """Remove the most recently added polygon (for undo).
             
             Returns
             -------
@@ -108,20 +112,47 @@ if _QT_AVAILABLE:
             if not self.completed_polygons:
                 return False
             
-            # Remove from storage
-            self.completed_polygons.pop()
+            # Remove from storage and save for redo
+            vertices = self.completed_polygons.pop()
             
-            # Remove visual item
+            # Remove visual item and save for redo
             if self.polygon_items:
                 item = self.polygon_items.pop()
+                # Get scene reference BEFORE removing item
                 scene = item.scene()
                 if scene is not None:
                     scene.removeItem(item)
+                # Store item and scene for redo
+                self.deleted_stack.append((vertices, item, scene))
+            
+            return True
+        
+        def redo_last_deletion(self) -> bool:
+            """Restore the most recently deleted polygon (for redo).
+            
+            Returns
+            -------
+            bool
+                True if a polygon was restored, False if nothing to redo.
+            """
+            if not self.deleted_stack:
+                return False
+            
+            # Pop from redo stack
+            vertices, item, scene = self.deleted_stack.pop()
+            
+            # Restore to storage and visual items
+            self.completed_polygons.append(vertices)
+            self.polygon_items.append(item)
+            
+            # Re-add to scene
+            if scene is not None:
+                scene.addItem(item)
             
             return True
         
         def remove_polygon_at_index(self, index: int) -> bool:
-            """Remove a specific polygon by index.
+            """Remove a specific polygon by index (for delete selected).
             
             Parameters
             ----------
@@ -136,17 +167,34 @@ if _QT_AVAILABLE:
             if index < 0 or index >= len(self.completed_polygons):
                 return False
             
-            # Remove from storage
-            self.completed_polygons.pop(index)
+            # Remove from storage and save for redo
+            vertices = self.completed_polygons.pop(index)
             
-            # Remove visual item
+            # Remove visual item and save for redo
             if index < len(self.polygon_items):
                 item = self.polygon_items.pop(index)
+                # Get scene reference BEFORE removing item
                 scene = item.scene()
                 if scene is not None:
                     scene.removeItem(item)
+                # Store item and scene for redo
+                self.deleted_stack.append((vertices, item, scene))
             
             return True
+        
+        def set_polygons_selectable(self, selectable: bool) -> None:
+            """Enable or disable polygon selection.
+            
+            Parameters
+            ----------
+            selectable : bool
+                True to make polygons selectable, False to disable selection.
+            """
+            for item in self.polygon_items:
+                item.setFlag(
+                    QGraphicsPolygonItem.GraphicsItemFlag.ItemIsSelectable,
+                    selectable
+                )
 
 
     def create_vertex_marker(scene: Any, x: float, y: float) -> QGraphicsEllipseItem:
@@ -223,6 +271,10 @@ if _QT_AVAILABLE:
         item.setPen(QPen(QColor(255, 255, 0, 230), 2))  # Yellow stroke
         item.setBrush(QBrush(QColor(255, 255, 0, 50)))  # Translucent fill
         item.setZValue(998)  # Below vertices but above image
+        
+        # Polygons start as NOT selectable (enabled when exiting drawing mode)
+        item.setFlag(QGraphicsPolygonItem.GraphicsItemFlag.ItemIsSelectable, False)
+        
         scene.addItem(item)
         return item
 

@@ -574,6 +574,8 @@ if _QT_AVAILABLE:
             if self._polygon_state.active:
                 return
             self._polygon_state.active = True
+            # Disable polygon selection while in drawing mode
+            self._polygon_state.set_polygons_selectable(False)
             self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
             self.setDragMode(QGraphicsView.DragMode.NoDrag)
             self.setMouseTracking(True)  # Ensure mouse tracking is on for rubber-band
@@ -584,6 +586,8 @@ if _QT_AVAILABLE:
                 return
             self._polygon_state.clear_active_drawing()
             self._polygon_state.active = False
+            # Enable polygon selection when exiting drawing mode
+            self._polygon_state.set_polygons_selectable(True)
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
 
@@ -610,6 +614,16 @@ if _QT_AVAILABLE:
                 True if a polygon was removed, False if there were none.
             """
             return self._polygon_state.remove_last_polygon()
+        
+        def redo_last_deletion(self) -> bool:
+            """Restore the most recently deleted polygon.
+            
+            Returns
+            -------
+            bool
+                True if a polygon was restored, False if nothing to redo.
+            """
+            return self._polygon_state.redo_last_deletion()
         
         def delete_selected_polygons(self) -> int:
             """Delete all currently selected polygon items.
@@ -787,6 +801,13 @@ if _QT_AVAILABLE:
             if event.key() == Qt.Key.Key_Z and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
                 if self.undo_last_polygon():
                     _log.info("Undid last polygon")
+                event.accept()
+                return
+            
+            # Ctrl+Y to redo last deletion
+            if event.key() == Qt.Key.Key_Y and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+                if self.redo_last_deletion():
+                    _log.info("Redid last deletion")
                 event.accept()
                 return
             
