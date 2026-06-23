@@ -31,6 +31,12 @@ GRDK now supports interactive polygon drawing on the viewer canvas for creating 
 5. **Clear Polygons**
    - Tools → "Clear Polygons" to remove all drawn polygons from the active pane
 
+### Important Notes
+
+- **GeoJSON Import Not Yet Implemented**: The current version only supports **export**. To edit existing polygons, you'll need to redraw them manually. GeoJSON import is planned for a future release.
+- **Double-click to close**: If double-click doesn't work reliably, use the **Enter** key instead to close the polygon
+- **Rubber-band preview**: A dashed yellow line should show from your last vertex to the cursor position while drawing
+
 ### Programmatic Usage
 
 ```python

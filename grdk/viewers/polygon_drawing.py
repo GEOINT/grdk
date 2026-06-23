@@ -142,8 +142,9 @@ if _QT_AVAILABLE:
             The rubber-band line.
         """
         item = QGraphicsLineItem(x1, y1, x2, y2)
-        item.setPen(QPen(QColor(255, 255, 0, 150), 2, Qt.PenStyle.DashLine))
-        item.setZValue(999)
+        pen = QPen(QColor(255, 255, 0, 255), 3, Qt.PenStyle.DashLine)  # Bright yellow, thicker, dashed
+        item.setPen(pen)
+        item.setZValue(1001)  # Above vertices
         scene.addItem(item)
         return item
 

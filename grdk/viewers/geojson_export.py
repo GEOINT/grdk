@@ -92,7 +92,7 @@ def export_polygons_to_geojson(
         )
         features.append(feature)
 
-    # Build FeatureCollection
+    # Build FeatureCollection with proper GeoJSON structure
     geojson = {
         "type": "FeatureCollection",
         "features": features,
@@ -105,12 +105,14 @@ def export_polygons_to_geojson(
             "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"},
         }
 
-    # Write to file
+    # Write to file with proper JSON formatting and UTF-8 BOM for better type detection
     output_path_obj = Path(output_path)
     output_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path_obj, 'w') as f:
-        json.dump(geojson, f, indent=2)
+    with open(output_path_obj, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(geojson, f, indent=2, ensure_ascii=False)
+        # Ensure file ends with newline (JSON/GeoJSON convention)
+        f.write('\n')
 
     _log.info(f"Exported {len(features)} polygon(s) to {output_path}")
 
@@ -267,10 +269,15 @@ def _vertices_to_geographic(vertices: np.ndarray, geolocation: Any) -> List[List
 
     for row, col in vertices:
         result = geolocation.image_to_latlon(float(row), float(col))
-        if isinstance(result, tuple) and len(result) >= 2:
-            lat, lon = float(result[0]), float(result[1])
-            geo_coords.append([lon, lat])  # GeoJSON: [longitude, latitude]
-        else:
-            raise ValueError(f"Geolocation returned invalid result: {result}")
+        
+        # Handle both tuple and numpy array returns, with 2 or 3 elements (lat, lon, [height])
+        if isinstance(result, (tuple, list, np.ndarray)):
+            result_array = np.asarray(result).flatten()
+            if len(result_array) >= 2:
+                lat, lon = float(result_array[0]), float(result_array[1])
+                geo_coords.append([lon, lat])  # GeoJSON: [longitude, latitude]
+                continue
+        
+        raise ValueError(f"Geolocation returned invalid result: {result}")
 
     return geo_coords

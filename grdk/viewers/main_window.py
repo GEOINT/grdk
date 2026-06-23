@@ -584,6 +584,17 @@ if _QT_AVAILABLE:
             self._pauli_action.setEnabled(False)
             self._pauli_action.triggered.connect(self._on_pauli_decomp)
 
+            self._draw_polygon_action = QAction("Draw &Polygon", self)
+            self._draw_polygon_action.setCheckable(True)
+            self._draw_polygon_action.setShortcut("D")
+            self._draw_polygon_action.triggered.connect(self._on_toggle_polygon_mode)
+
+            self._export_polygons_action = QAction("Export Polygons as GeoJSON...", self)
+            self._export_polygons_action.triggered.connect(self._on_export_polygons)
+
+            self._clear_polygons_action = QAction("Clear Polygons", self)
+            self._clear_polygons_action.triggered.connect(self._on_clear_polygons)
+
             self._show_metadata_action = QAction("Show File &Metadata...", self)
             self._show_metadata_action.setShortcut(QKeySequence("Ctrl+M"))
             self._show_metadata_action.setEnabled(False)
@@ -2708,14 +2719,22 @@ if _QT_AVAILABLE:
                 return
 
             # Prompt for output path
-            filepath, _ = QFileDialog.getSaveFileName(
+            filepath, selected_filter = QFileDialog.getSaveFileName(
                 self,
                 "Export Polygons as GeoJSON",
-                "",
-                "GeoJSON Files (*.geojson *.json);;All Files (*)",
+                "polygons.geojson",  # Default filename with extension
+                "GeoJSON Files (*.geojson);;JSON Files (*.json);;All Files (*)",
             )
             if not filepath:
                 return
+
+            # Ensure .geojson or .json extension
+            if not (filepath.endswith('.geojson') or filepath.endswith('.json')):
+                # Check which filter was selected
+                if 'JSON Files' in selected_filter:
+                    filepath += '.json'
+                else:
+                    filepath += '.geojson'
 
             try:
                 export_polygons_to_geojson(

@@ -467,6 +467,7 @@ if _QT_AVAILABLE:
 
             # Polygon drawing state
             self._polygon_state = PolygonDrawingState()
+            self._polygon_completing = False  # Flag to prevent double-click from adding vertex
 
         def set_array(self, arr: np.ndarray) -> None:
             """Set the source image array and refresh display.
@@ -575,6 +576,7 @@ if _QT_AVAILABLE:
             self._polygon_state.active = True
             self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
             self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            self.setMouseTracking(True)  # Ensure mouse tracking is on for rubber-band
 
         def exit_polygon_mode(self) -> None:
             """Exit polygon drawing mode and return to normal interaction."""
@@ -603,8 +605,10 @@ if _QT_AVAILABLE:
 
         def mousePressEvent(self, event: Any) -> None:
             """Handle mouse press for polygon drawing, zoom box, or default drag."""
-            # Polygon drawing mode
-            if self._polygon_state.active and event.button() == Qt.MouseButton.LeftButton:
+            # Polygon drawing mode (but not on double-click)
+            if (self._polygon_state.active 
+                and event.button() == Qt.MouseButton.LeftButton
+                and not self._polygon_completing):
                 scene_pos = self.mapToScene(event.pos())
                 x, y = scene_pos.x(), scene_pos.y()
                 
@@ -674,9 +678,12 @@ if _QT_AVAILABLE:
         def mouseDoubleClickEvent(self, event: Any) -> None:
             """Complete polygon on double-click if in drawing mode, else fit to view."""
             if self._polygon_state.active and event.button() == Qt.MouseButton.LeftButton:
+                self._polygon_completing = True
                 self._complete_polygon()
+                self._polygon_completing = False
                 event.accept()
-                return
+                return  # Don't call parent or fit_in_view
+            # Only fit to view if NOT in polygon mode
             self._push_zoom_state()
             self.fit_in_view()
 
@@ -688,16 +695,17 @@ if _QT_AVAILABLE:
                 x, y = scene_pos.x(), scene_pos.y()
                 last_x, last_y = self._polygon_state.vertices[-1]
                 
-                # Remove old rubber-band
+                # Remove old rubber-band if it exists
                 if self._polygon_state.rubber_band_item is not None:
-                    self._scene.removeItem(self._polygon_state.rubber_band_item)
+                    if self._polygon_state.rubber_band_item.scene() is not None:
+                        self._scene.removeItem(self._polygon_state.rubber_band_item)
+                    self._polygon_state.rubber_band_item = None
                 
                 # Create new rubber-band
                 self._polygon_state.rubber_band_item = create_rubber_band(
                     self._scene, last_x, last_y, x, y
                 )
-                event.accept()
-                return
+                # Don't call event.accept() or return - let it continue to update hover
             
             # Zoom box update
             if self._zoom_box_active:
@@ -706,6 +714,8 @@ if _QT_AVAILABLE:
                 )
                 event.accept()
                 return
+            
+            # Default: emit pixel hover
             super().mouseMoveEvent(event)
             if self._source is None:
                 return
