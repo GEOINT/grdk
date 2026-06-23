@@ -616,7 +616,11 @@ if _QT_AVAILABLE:
             tools_menu.addAction(self._rgb_action)
             tools_menu.addAction(self._pauli_action)
             tools_menu.addSeparator()
+            tools_menu.addAction(self._draw_polygon_action)
+            tools_menu.addAction(self._clear_polygons_action)
+            tools_menu.addSeparator()
             tools_menu.addAction(self._export_data_action)
+            tools_menu.addAction(self._export_polygons_action)
 
             view_menu = self.menuBar().addMenu("&View")
             view_menu.addAction(self._fit_action)
@@ -647,6 +651,8 @@ if _QT_AVAILABLE:
             self._toolbar.addAction(self._fit_action)
             self._toolbar.addAction(self._zoom_in_action)
             self._toolbar.addAction(self._zoom_out_action)
+            self._toolbar.addSeparator()
+            self._toolbar.addAction(self._draw_polygon_action)
             self._toolbar.addSeparator()
             self._toolbar.addAction(self._export_action)
             self._toolbar.addSeparator()
@@ -2655,6 +2661,89 @@ if _QT_AVAILABLE:
                     self, "Export Error",
                     f"Could not export view:\n{filepath}\n\n{e}",
                 )
+
+        # --- Polygon Drawing ---
+
+        def _on_toggle_polygon_mode(self, checked: bool) -> None:
+            """Toggle polygon drawing mode on the active pane."""
+            pane_idx = self._viewer.active_pane
+            if pane_idx == 0:
+                canvas = self._viewer.left_viewer.canvas
+            else:
+                canvas = self._viewer.right_viewer.canvas
+
+            if checked:
+                canvas.enter_polygon_mode()
+                self.statusBar().showMessage("Drawing Mode: Click to add vertex | Double-click or Enter to close | Esc to cancel", 0)
+            else:
+                canvas.exit_polygon_mode()
+                self.statusBar().clearMessage()
+
+        def _on_export_polygons(self) -> None:
+            """Export all drawn polygons to GeoJSON."""
+            from grdk.viewers.geojson_export import export_polygons_to_geojson
+
+            # Get active pane
+            pane_idx = self._viewer.active_pane
+            if pane_idx == 0:
+                canvas = self._viewer.left_viewer.canvas
+                reader = self._viewer.left_viewer._reader
+                geo = self._viewer.left_viewer._geolocation
+            else:
+                canvas = self._viewer.right_viewer.canvas
+                reader = self._viewer.right_viewer._reader
+                geo = self._viewer.right_viewer._geolocation
+
+            polygons = canvas.get_completed_polygons()
+            if not polygons:
+                QMessageBox.information(
+                    self, "No Polygons", "No polygons have been drawn yet.",
+                )
+                return
+
+            if reader is None:
+                QMessageBox.warning(
+                    self, "No Image", "No image is loaded in the active pane.",
+                )
+                return
+
+            # Prompt for output path
+            filepath, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Polygons as GeoJSON",
+                "",
+                "GeoJSON Files (*.geojson *.json);;All Files (*)",
+            )
+            if not filepath:
+                return
+
+            try:
+                export_polygons_to_geojson(
+                    polygons=polygons,
+                    reader=reader,
+                    geolocation=geo,
+                    output_path=filepath,
+                    label_class="roi",
+                )
+                QMessageBox.information(
+                    self, "Export Successful",
+                    f"Exported {len(polygons)} polygon(s) to {filepath}",
+                )
+            except Exception as e:
+                QMessageBox.warning(
+                    self, "Export Failed", f"Could not export polygons: {e}",
+                )
+
+        def _on_clear_polygons(self) -> None:
+            """Clear all drawn polygons from the active pane."""
+            pane_idx = self._viewer.active_pane
+            if pane_idx == 0:
+                canvas = self._viewer.left_viewer.canvas
+            else:
+                canvas = self._viewer.right_viewer.canvas
+
+            canvas.clear_all_polygons()
+            self.statusBar().showMessage("All polygons cleared", 2000)
 
         # --- Cleanup ---
 
