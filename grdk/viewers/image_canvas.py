@@ -600,6 +600,38 @@ if _QT_AVAILABLE:
         def clear_all_polygons(self) -> None:
             """Remove all drawn polygons from the canvas."""
             self._polygon_state.clear_all_polygons()
+        
+        def undo_last_polygon(self) -> bool:
+            """Remove the most recently drawn polygon.
+            
+            Returns
+            -------
+            bool
+                True if a polygon was removed, False if there were none.
+            """
+            return self._polygon_state.remove_last_polygon()
+        
+        def delete_selected_polygons(self) -> int:
+            """Delete all currently selected polygon items.
+            
+            Returns
+            -------
+            int
+                Number of polygons deleted.
+            """
+            selected_items = self._scene.selectedItems()
+            deleted_count = 0
+            
+            for item in selected_items:
+                # Find the index of this item in polygon_items
+                try:
+                    index = self._polygon_state.polygon_items.index(item)
+                    if self._polygon_state.remove_polygon_at_index(index):
+                        deleted_count += 1
+                except (ValueError, IndexError):
+                    continue
+            
+            return deleted_count
 
         # --- Event overrides ---
 
@@ -738,7 +770,7 @@ if _QT_AVAILABLE:
                     self.pixel_hovered.emit(row, col, value)
 
         def keyPressEvent(self, event: Any) -> None:
-            """Handle keyboard shortcuts for polygon drawing."""
+            """Handle keyboard shortcuts for polygon drawing and editing."""
             if self._polygon_state.active:
                 if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                     # Complete polygon
@@ -750,6 +782,22 @@ if _QT_AVAILABLE:
                     self._polygon_state.clear_active_drawing()
                     event.accept()
                     return
+            
+            # Ctrl+Z to undo last polygon (works even when not in drawing mode)
+            if event.key() == Qt.Key.Key_Z and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+                if self.undo_last_polygon():
+                    _log.info("Undid last polygon")
+                event.accept()
+                return
+            
+            # Delete key to remove selected polygons
+            if event.key() == Qt.Key.Key_Delete:
+                deleted = self.delete_selected_polygons()
+                if deleted > 0:
+                    _log.info(f"Deleted {deleted} selected polygon(s)")
+                event.accept()
+                return
+            
             super().keyPressEvent(event)
 
         # --- Internal ---

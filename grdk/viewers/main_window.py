@@ -589,10 +589,14 @@ if _QT_AVAILABLE:
             self._draw_polygon_action.setShortcut("D")
             self._draw_polygon_action.triggered.connect(self._on_toggle_polygon_mode)
 
+            self._undo_polygon_action = QAction("&Undo Last Polygon", self)
+            self._undo_polygon_action.setShortcut(QKeySequence("Ctrl+Z"))
+            self._undo_polygon_action.triggered.connect(self._on_undo_polygon)
+
             self._export_polygons_action = QAction("Export Polygons as GeoJSON...", self)
             self._export_polygons_action.triggered.connect(self._on_export_polygons)
 
-            self._clear_polygons_action = QAction("Clear Polygons", self)
+            self._clear_polygons_action = QAction("Clear All Polygons", self)
             self._clear_polygons_action.triggered.connect(self._on_clear_polygons)
 
             self._show_metadata_action = QAction("Show File &Metadata...", self)
@@ -628,6 +632,7 @@ if _QT_AVAILABLE:
             tools_menu.addAction(self._pauli_action)
             tools_menu.addSeparator()
             tools_menu.addAction(self._draw_polygon_action)
+            tools_menu.addAction(self._undo_polygon_action)
             tools_menu.addAction(self._clear_polygons_action)
             tools_menu.addSeparator()
             tools_menu.addAction(self._export_data_action)
@@ -2685,10 +2690,26 @@ if _QT_AVAILABLE:
 
             if checked:
                 canvas.enter_polygon_mode()
-                self.statusBar().showMessage("Drawing Mode: Click to add vertex | Double-click or Enter to close | Esc to cancel", 0)
+                self.statusBar().showMessage(
+                    "Drawing Mode: Click to add vertex | Double-click or Enter to close | "
+                    "Ctrl+Z to undo | Delete to remove selected | Esc to cancel", 0
+                )
             else:
                 canvas.exit_polygon_mode()
                 self.statusBar().clearMessage()
+        
+        def _on_undo_polygon(self) -> None:
+            """Undo the most recently drawn polygon on the active pane."""
+            pane_idx = self._viewer.active_pane
+            if pane_idx == 0:
+                canvas = self._viewer.left_viewer.canvas
+            else:
+                canvas = self._viewer.right_viewer.canvas
+            
+            if canvas.undo_last_polygon():
+                self.statusBar().showMessage("Undid last polygon", 2000)
+            else:
+                self.statusBar().showMessage("No polygons to undo", 2000)
 
         def _on_export_polygons(self) -> None:
             """Export all drawn polygons to GeoJSON."""

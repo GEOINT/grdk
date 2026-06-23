@@ -96,6 +96,57 @@ if _QT_AVAILABLE:
                 if scene is not None:
                     scene.removeItem(item)
             self.polygon_items.clear()
+        
+        def remove_last_polygon(self) -> bool:
+            """Remove the most recently added polygon.
+            
+            Returns
+            -------
+            bool
+                True if a polygon was removed, False if there were no polygons.
+            """
+            if not self.completed_polygons:
+                return False
+            
+            # Remove from storage
+            self.completed_polygons.pop()
+            
+            # Remove visual item
+            if self.polygon_items:
+                item = self.polygon_items.pop()
+                scene = item.scene()
+                if scene is not None:
+                    scene.removeItem(item)
+            
+            return True
+        
+        def remove_polygon_at_index(self, index: int) -> bool:
+            """Remove a specific polygon by index.
+            
+            Parameters
+            ----------
+            index : int
+                Index of the polygon to remove.
+            
+            Returns
+            -------
+            bool
+                True if polygon was removed, False if index was invalid.
+            """
+            if index < 0 or index >= len(self.completed_polygons):
+                return False
+            
+            # Remove from storage
+            self.completed_polygons.pop(index)
+            
+            # Remove visual item
+            if index < len(self.polygon_items):
+                item = self.polygon_items.pop(index)
+                scene = item.scene()
+                if scene is not None:
+                    scene.removeItem(item)
+            
+            return True
 
 
     def create_vertex_marker(scene: Any, x: float, y: float) -> QGraphicsEllipseItem:
