@@ -2830,18 +2830,20 @@ if _QT_AVAILABLE:
                         "\n".join(f"  • {s}" for s in skipped[:5]) +
                         ("\n  ..." if len(skipped) > 5 else "")
                     )
-                    QMessageBox.information(
+                    QMessageBox.warning(
                         self, "Import Complete (with warnings)", msg,
+                    )
+                    self.statusBar().showMessage(
+                        f"Imported {len(polygons)}, skipped {len(skipped)} polygon(s)", 3000
                     )
                 else:
                     QMessageBox.information(
                         self, "Import Successful",
                         f"Imported {len(polygons)} polygon(s) from {filepath}",
                     )
-                
-                self.statusBar().showMessage(
-                    f"Imported {len(polygons)} polygon(s)", 2000
-                )
+                    self.statusBar().showMessage(
+                        f"Imported {len(polygons)} polygon(s)", 2000
+                    )
 
             except GeoJSONImportError as e:
                 QMessageBox.critical(
