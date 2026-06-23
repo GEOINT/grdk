@@ -272,6 +272,11 @@ if _QT_AVAILABLE:
 
         def mouseMoveEvent(self, event: Any) -> None:
             """Emit pixel coordinates using tile cache data in tiled mode."""
+            # Check for polygon drawing mode first (delegate to parent)
+            if hasattr(self, '_polygon_state') and self._polygon_state.active and len(self._polygon_state.vertices) > 0:
+                super().mouseMoveEvent(event)
+                return
+            
             if self._zoom_box_active:
                 super().mouseMoveEvent(event)
                 return
@@ -358,8 +363,12 @@ if _QT_AVAILABLE:
                 self.viewport_changed.emit()
 
         def mouseDoubleClickEvent(self, event: Any) -> None:
-            """Fit to view on double-click."""
-            self.fit_in_view()
+            """Handle double-click for polygon completion or fit-in-view.
+            
+            Delegates to parent (ImageCanvas) which checks for polygon mode.
+            """
+            # Delegate to parent - it handles polygon mode correctly
+            super().mouseDoubleClickEvent(event)
 
         def closeEvent(self, event: Any) -> None:
             """Ensure cleanup on widget close."""

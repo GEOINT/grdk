@@ -4,6 +4,28 @@ All notable changes to GRDK are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+#### Interactive Polygon Drawing & GeoJSON Export (2026-06-23)
+- **Interactive polygon drawing on ImageCanvas for ROI labeling**
+  - Click to add vertices, double-click or Enter to close polygon
+  - Escape to cancel drawing
+  - Visual feedback with yellow vertex markers and dashed rubber-band preview
+- **GeoJSON export for drawn polygons with geolocation metadata**
+  - Automatic conversion from pixel coordinates to geographic (lat/lon)
+  - Metadata enrichment (sensor, polarization, acquisition time, creation timestamp)
+  - Fallback to pixel coordinates when geolocation unavailable
+  - Pixel coordinates stored as backup in `properties.pixel_vertices`
+- **ViewerMainWindow integration**
+  - "Draw Polygon" toolbar action (checkable, shortcut: D)
+  - "Export Polygons as GeoJSON..." menu action
+  - "Clear Polygons" menu action
+  - Status bar drawing hints
+- **New modules**
+  - `grdk.viewers.polygon_drawing` — PolygonDrawingState and rendering utilities
+  - `grdk.viewers.geojson_export` — export_polygons_to_geojson() function
+- **Documentation**: `docs/polygon-drawing.md` — usage guide and architecture
+
 ### Changed
 
 #### GRDL Factory Pattern Modernization (2026-06-18)

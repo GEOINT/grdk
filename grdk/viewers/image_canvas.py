@@ -46,12 +46,21 @@ import numpy as np
 
 try:
     from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QRubberBand
-    from PyQt6.QtGui import QImage, QPixmap, QPainter
+    from PyQt6.QtGui import QImage, QPixmap, QPainter, QCursor
     from PyQt6.QtCore import QPoint, QRect, QSize, Qt, pyqtSignal as Signal
 
     _QT_AVAILABLE = True
 except ImportError:
     _QT_AVAILABLE = False
+
+# GRDK internal (loaded only if Qt is available)
+if _QT_AVAILABLE:
+    from grdk.viewers.polygon_drawing import (
+        PolygonDrawingState,
+        create_vertex_marker,
+        create_rubber_band,
+        create_polygon_item,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +420,7 @@ if _QT_AVAILABLE:
         pixel_hovered = Signal(int, int, object)
         zoom_changed = Signal(float)
         display_settings_changed = Signal(object)
+        polygon_completed = Signal(object)  # emits np.ndarray of vertices
 
         _ZOOM_FACTOR = 1.15
 
@@ -454,6 +464,10 @@ if _QT_AVAILABLE:
             self._zoom_rubber_band = QRubberBand(
                 QRubberBand.Shape.Rectangle, self,
             )
+
+            # Polygon drawing state
+            self._polygon_state = PolygonDrawingState()
+            self._polygon_completing = False  # Flag to prevent double-click from adding vertex
 
         def set_array(self, arr: np.ndarray) -> None:
             """Set the source image array and refresh display.
@@ -548,10 +562,113 @@ if _QT_AVAILABLE:
             self.setTransform(xform)
             self._update_zoom_level()
 
+        # --- Polygon drawing mode ---
+
+        def enter_polygon_mode(self) -> None:
+            """Enter polygon drawing mode.
+
+            The canvas will capture mouse clicks to build a polygon.
+            Click to add vertices, double-click or press Enter to close.
+            Press Escape to cancel.
+            """
+            if self._polygon_state.active:
+                return
+            self._polygon_state.active = True
+            # Disable polygon selection while in drawing mode
+            self._polygon_state.set_polygons_selectable(False)
+            self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            self.setMouseTracking(True)  # Ensure mouse tracking is on for rubber-band
+
+        def exit_polygon_mode(self) -> None:
+            """Exit polygon drawing mode and return to normal interaction."""
+            if not self._polygon_state.active:
+                return
+            self._polygon_state.clear_active_drawing()
+            self._polygon_state.active = False
+            # Enable polygon selection when exiting drawing mode
+            self._polygon_state.set_polygons_selectable(True)
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+
+        def get_completed_polygons(self) -> list:
+            """Get all completed polygons as list of numpy arrays.
+
+            Returns
+            -------
+            List[np.ndarray]
+                Each polygon is shape (N, 2) in (row, col) format.
+            """
+            return self._polygon_state.completed_polygons.copy()
+
+        def clear_all_polygons(self) -> None:
+            """Remove all drawn polygons from the canvas."""
+            self._polygon_state.clear_all_polygons()
+        
+        def undo_last_polygon(self) -> bool:
+            """Remove the most recently drawn polygon.
+            
+            Returns
+            -------
+            bool
+                True if a polygon was removed, False if there were none.
+            """
+            return self._polygon_state.remove_last_polygon()
+        
+        def redo_last_deletion(self) -> bool:
+            """Restore the most recently deleted polygon.
+            
+            Returns
+            -------
+            bool
+                True if a polygon was restored, False if nothing to redo.
+            """
+            return self._polygon_state.redo_last_deletion()
+        
+        def delete_selected_polygons(self) -> int:
+            """Delete all currently selected polygon items.
+            
+            Returns
+            -------
+            int
+                Number of polygons deleted.
+            """
+            selected_items = self._scene.selectedItems()
+            deleted_count = 0
+            
+            for item in selected_items:
+                # Find the index of this item in polygon_items
+                try:
+                    index = self._polygon_state.polygon_items.index(item)
+                    if self._polygon_state.remove_polygon_at_index(index):
+                        deleted_count += 1
+                except (ValueError, IndexError):
+                    continue
+            
+            return deleted_count
+
         # --- Event overrides ---
 
         def mousePressEvent(self, event: Any) -> None:
-            """Start zoom box on Ctrl+left-click, else default drag."""
+            """Handle mouse press for polygon drawing, zoom box, or default drag."""
+            # Polygon drawing mode (but not on double-click)
+            if (self._polygon_state.active 
+                and event.button() == Qt.MouseButton.LeftButton
+                and not self._polygon_completing):
+                scene_pos = self.mapToScene(event.pos())
+                x, y = scene_pos.x(), scene_pos.y()
+                
+                # Add vertex
+                self._polygon_state.vertices.append((x, y))
+                
+                # Create visual marker
+                marker = create_vertex_marker(self._scene, x, y)
+                self._polygon_state.vertex_items.append(marker)
+                
+                event.accept()
+                return
+            
+            # Zoom box on Ctrl+left-click
             if (event.modifiers() & Qt.KeyboardModifier.ControlModifier
                     and event.button() == Qt.MouseButton.LeftButton):
                 self._zoom_box_active = True
@@ -605,18 +722,46 @@ if _QT_AVAILABLE:
             self._update_zoom_level()
 
         def mouseDoubleClickEvent(self, event: Any) -> None:
-            """Fit to view on double-click."""
+            """Complete polygon on double-click if in drawing mode, else fit to view."""
+            if self._polygon_state.active and event.button() == Qt.MouseButton.LeftButton:
+                self._polygon_completing = True
+                self._complete_polygon()
+                self._polygon_completing = False
+                event.accept()
+                return  # Don't call parent or fit_in_view
+            # Only fit to view if NOT in polygon mode
             self._push_zoom_state()
             self.fit_in_view()
 
         def mouseMoveEvent(self, event: Any) -> None:
-            """Emit pixel coordinates and value on hover, or update zoom box."""
+            """Emit pixel coordinates and value on hover, update zoom box, or rubber-band preview."""
+            # Rubber-band preview when drawing polygon
+            if self._polygon_state.active and len(self._polygon_state.vertices) > 0:
+                scene_pos = self.mapToScene(event.pos())
+                x, y = scene_pos.x(), scene_pos.y()
+                last_x, last_y = self._polygon_state.vertices[-1]
+                
+                # Remove old rubber-band if it exists
+                if self._polygon_state.rubber_band_item is not None:
+                    if self._polygon_state.rubber_band_item.scene() is not None:
+                        self._scene.removeItem(self._polygon_state.rubber_band_item)
+                    self._polygon_state.rubber_band_item = None
+                
+                # Create new rubber-band
+                self._polygon_state.rubber_band_item = create_rubber_band(
+                    self._scene, last_x, last_y, x, y
+                )
+                # Don't call event.accept() or return - let it continue to update hover
+            
+            # Zoom box update
             if self._zoom_box_active:
                 self._zoom_rubber_band.setGeometry(
                     QRect(self._zoom_box_origin, event.pos()).normalized(),
                 )
                 event.accept()
                 return
+            
+            # Default: emit pixel hover
             super().mouseMoveEvent(event)
             if self._source is None:
                 return
@@ -638,7 +783,70 @@ if _QT_AVAILABLE:
                         value = self._source[:, row, col]
                     self.pixel_hovered.emit(row, col, value)
 
+        def keyPressEvent(self, event: Any) -> None:
+            """Handle keyboard shortcuts for polygon drawing and editing."""
+            if self._polygon_state.active:
+                if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    # Complete polygon
+                    self._complete_polygon()
+                    event.accept()
+                    return
+                elif event.key() == Qt.Key.Key_Escape:
+                    # Cancel polygon
+                    self._polygon_state.clear_active_drawing()
+                    event.accept()
+                    return
+            
+            # Ctrl+Z to undo last polygon (works even when not in drawing mode)
+            if event.key() == Qt.Key.Key_Z and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+                if self.undo_last_polygon():
+                    _log.info("Undid last polygon")
+                event.accept()
+                return
+            
+            # Ctrl+Y to redo last deletion
+            if event.key() == Qt.Key.Key_Y and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+                if self.redo_last_deletion():
+                    _log.info("Redid last deletion")
+                event.accept()
+                return
+            
+            # Delete key to remove selected polygons (only when NOT in drawing mode)
+            if event.key() == Qt.Key.Key_Delete and not self._polygon_state.active:
+                deleted = self.delete_selected_polygons()
+                if deleted > 0:
+                    _log.info(f"Deleted {deleted} selected polygon(s)")
+                event.accept()
+                return
+            
+            super().keyPressEvent(event)
+
         # --- Internal ---
+
+        def _complete_polygon(self) -> None:
+            """Complete the current polygon and emit signal."""
+            if len(self._polygon_state.vertices) < 3:
+                # Need at least 3 vertices for a polygon
+                self._polygon_state.clear_active_drawing()
+                return
+            
+            # Convert (col, row) scene coords to (row, col) for storage
+            vertices = np.array([
+                (y, x) for x, y in self._polygon_state.vertices
+            ], dtype=np.float64)
+            
+            # Store the completed polygon
+            self._polygon_state.completed_polygons.append(vertices)
+            
+            # Render the polygon
+            item = create_polygon_item(self._scene, vertices)
+            self._polygon_state.polygon_items.append(item)
+            
+            # Emit signal
+            self.polygon_completed.emit(vertices)
+            
+            # Clear active drawing
+            self._polygon_state.clear_active_drawing()
 
         def _refresh_display(self) -> None:
             """Re-render the source array with current settings."""
@@ -711,7 +919,7 @@ if _QT_AVAILABLE:
                 self.fit_in_view()
 
         def wheelEvent(self, event: Any) -> None:
-            """Ignore scroll — no zoom on thumbnails."""
+            """Ignore scroll - no zoom on thumbnails."""
             event.ignore()
 
         def mouseDoubleClickEvent(self, event: Any) -> None:
