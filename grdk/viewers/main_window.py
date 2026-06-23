@@ -2719,18 +2719,29 @@ if _QT_AVAILABLE:
                 return
 
             # Prompt for output path
-            filepath, selected_filter = QFileDialog.getSaveFileName(
-                self,
-                "Export Polygons as GeoJSON",
-                "polygons.geojson",  # Default filename with extension
-                "GeoJSON Files (*.geojson);;JSON Files (*.json);;All Files (*)",
-            )
-            if not filepath:
+            # Create a dialog with proper default suffix handling
+            dialog = QFileDialog(self, "Export Polygons as GeoJSON")
+            dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+            dialog.setNameFilters([
+                "GeoJSON Files (*.geojson)",
+                "JSON Files (*.json)",
+                "All Files (*)"
+            ])
+            dialog.setDefaultSuffix("geojson")  # Auto-append if user doesn't provide extension
+            dialog.selectNameFilter("GeoJSON Files (*.geojson)")  # Default to GeoJSON
+            
+            if not dialog.exec():
                 return
-
-            # Ensure .geojson or .json extension
+            
+            selected_files = dialog.selectedFiles()
+            if not selected_files:
+                return
+            
+            filepath = selected_files[0]
+            
+            # Ensure extension is present (fallback if dialog didn't add it)
             if not (filepath.endswith('.geojson') or filepath.endswith('.json')):
-                # Check which filter was selected
+                selected_filter = dialog.selectedNameFilter()
                 if 'JSON Files' in selected_filter:
                     filepath += '.json'
                 else:
