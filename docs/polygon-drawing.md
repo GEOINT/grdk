@@ -6,40 +6,63 @@ GRDK now supports interactive polygon drawing on the viewer canvas for creating 
 
 ## Usage
 
+### Toolbar Quick Reference
+
+The polygon editing toolbar (visible by default) contains all polygon tools with clean, minimal symbols:
+
+| Symbol | Type | Shortcut | Function |
+|--------|------|----------|----------|
+| **✎** | Toggle | `D` | Draw Polygon — enter/exit drawing mode |
+| **⟲** | Single Press | `Ctrl+Z` | Undo — remove last polygon |
+| **⟳** | Single Press | `Ctrl+Y` | Redo — restore last deletion |
+| **×** | Single Press | `Delete` | Delete — remove selected polygon(s) |
+| **⇪** | Single Press | — | Export — save to GeoJSON |
+
+**Hover over any button to see its full tooltip with keyboard shortcut.**
+
+**Toggle vs Single Press:**
+- **Toggle button** (◇ Draw): Stays pressed when active, shows visual feedback. Press again to deactivate.
+- **Single press buttons** (↶ ↷ × ⇓): Execute immediately, don't stay pressed.
+
 ### GUI Workflow (ViewerMainWindow)
 
+**A clean, minimal toolbar shows polygon editing tools with simple symbols.**
+
 1. **Load an Image**
-   - Open any supported image format (SAR, EO/IR, etc.) using File → Open or the toolbar button
+   - Use File menu → Open (or Ctrl+O)
 
 2. **Enter Drawing Mode**
-   - Click the "Draw Polygon" button in the toolbar (shortcut: `D`)
+   - Click the **◇** (diamond) toolbar button — or press `D`
+   - The button will show as pressed/highlighted when active
    - The cursor changes to a crosshair
    - Status bar shows: "Drawing Mode: Click to add vertex | Double-click or Enter to close | Esc to cancel"
 
 3. **Draw Polygons**
-   - **Left-click** to add each vertex
-   - A yellow circle marks each vertex
-   - A dashed line previews from the last vertex to your cursor
+   - **Left-click** to add each vertex (yellow circle markers)
+   - A dashed yellow line previews from the last vertex to your cursor
    - **Double-click** or press **Enter** to close the polygon
    - Press **Escape** to cancel and discard the current polygon
 
-4. **Select and Edit Polygons**
-   - **Exit Drawing Mode**: Press `D` again to toggle off drawing mode
-   - The cursor returns to normal arrow
+4. **Exit Drawing Mode**
+   - Click the **◇** button again (or press `D`) to toggle off
+   - The button unpresses, cursor returns to normal arrow
    - Status bar shows: "Selection Mode: Click polygon to select | Delete to remove | Ctrl+Z to undo | Ctrl+Y to redo"
+
+5. **Edit Polygons** (in Selection Mode)
    - **Click** on any polygon to select it (it will highlight)
-   - Press **Delete** to remove selected polygon(s)
-   - Press **Ctrl+Z** to undo the last polygon (works in any mode)
-   - Press **Ctrl+Y** to redo the last deletion
+   - Click **↶** (undo button) or press Ctrl+Z to undo the last polygon
+   - Click **↷** (redo button) or press Ctrl+Y to redo the last deletion
+   - Click **×** (delete button) or press Delete to remove selected polygon(s)
    - You can select multiple polygons and delete them all at once
 
-5. **Export to GeoJSON**
-   - Tools → "Export Polygons as GeoJSON..."
+6. **Export to GeoJSON**
+   - Click the **⇓** (export button) in the toolbar
+   - Choose file location and name (extension auto-added)
    - Polygons are automatically converted to geographic coordinates (lat/lon) if geolocation is available
    - Falls back to pixel coordinates if no geolocation is available
 
-6. **Clear All Polygons**
-   - Tools → "Clear All Polygons" to remove all drawn polygons from the active pane
+7. **Clear All Polygons**
+   - Tools menu → "Clear All Polygons" to remove all drawn polygons from the active pane
 
 ### Important Notes
 

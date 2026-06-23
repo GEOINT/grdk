@@ -584,20 +584,29 @@ if _QT_AVAILABLE:
             self._pauli_action.setEnabled(False)
             self._pauli_action.triggered.connect(self._on_pauli_decomp)
 
-            self._draw_polygon_action = QAction("Draw &Polygon", self)
+            self._draw_polygon_action = QAction("✎", self)
             self._draw_polygon_action.setCheckable(True)
             self._draw_polygon_action.setShortcut("D")
+            self._draw_polygon_action.setToolTip("Draw Polygon (D)")
             self._draw_polygon_action.triggered.connect(self._on_toggle_polygon_mode)
 
-            self._undo_polygon_action = QAction("&Undo Last Polygon", self)
+            self._undo_polygon_action = QAction("⟲", self)
             self._undo_polygon_action.setShortcut(QKeySequence("Ctrl+Z"))
+            self._undo_polygon_action.setToolTip("Undo Polygon (Ctrl+Z)")
             self._undo_polygon_action.triggered.connect(self._on_undo_polygon)
 
-            self._redo_polygon_action = QAction("&Redo Last Deletion", self)
+            self._redo_polygon_action = QAction("⟳", self)
             self._redo_polygon_action.setShortcut(QKeySequence("Ctrl+Y"))
+            self._redo_polygon_action.setToolTip("Redo Polygon (Ctrl+Y)")
             self._redo_polygon_action.triggered.connect(self._on_redo_polygon)
 
-            self._export_polygons_action = QAction("Export Polygons as GeoJSON...", self)
+            self._delete_selected_action = QAction("×", self)
+            self._delete_selected_action.setShortcut(QKeySequence("Delete"))
+            self._delete_selected_action.setToolTip("Delete Selected Polygons (Delete)")
+            self._delete_selected_action.triggered.connect(self._on_delete_selected)
+
+            self._export_polygons_action = QAction("⇪", self)
+            self._export_polygons_action.setToolTip("Export Polygons to GeoJSON...")
             self._export_polygons_action.triggered.connect(self._on_export_polygons)
 
             self._clear_polygons_action = QAction("Clear All Polygons", self)
@@ -635,13 +644,9 @@ if _QT_AVAILABLE:
             tools_menu.addAction(self._rgb_action)
             tools_menu.addAction(self._pauli_action)
             tools_menu.addSeparator()
-            tools_menu.addAction(self._draw_polygon_action)
-            tools_menu.addAction(self._undo_polygon_action)
-            tools_menu.addAction(self._redo_polygon_action)
             tools_menu.addAction(self._clear_polygons_action)
             tools_menu.addSeparator()
             tools_menu.addAction(self._export_data_action)
-            tools_menu.addAction(self._export_polygons_action)
 
             view_menu = self.menuBar().addMenu("&View")
             view_menu.addAction(self._fit_action)
@@ -660,26 +665,28 @@ if _QT_AVAILABLE:
         # --- Toolbar ---
 
         def _create_toolbar(self) -> None:
-            """Build the main toolbar (hidden by default)."""
-            self._toolbar = QToolBar("Main", self)
+            """Build the polygon editing toolbar."""
+            from PyQt6.QtWidgets import QLabel
+            
+            self._toolbar = QToolBar("Polygon Tools", self)
             self._toolbar.setMovable(False)
+            self._toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
             self.addToolBar(self._toolbar)
 
-            self._toolbar.addAction(self._open_action)
-            self._toolbar.addAction(self._open_dir_action)
-            self._toolbar.addAction(self._load_vector_action)
-            self._toolbar.addSeparator()
-            self._toolbar.addAction(self._fit_action)
-            self._toolbar.addAction(self._zoom_in_action)
-            self._toolbar.addAction(self._zoom_out_action)
-            self._toolbar.addSeparator()
+            # Add label to identify toolbar purpose
+            label = QLabel("  Polygons:  ")
+            label.setStyleSheet("QLabel { font-weight: bold; color: #555; }")
+            self._toolbar.addWidget(label)
+            
+            # Only polygon editing tools
             self._toolbar.addAction(self._draw_polygon_action)
-            self._toolbar.addSeparator()
-            self._toolbar.addAction(self._export_action)
-            self._toolbar.addSeparator()
-            self._toolbar.addAction(self._toggle_dual_action)
+            self._toolbar.addAction(self._undo_polygon_action)
+            self._toolbar.addAction(self._redo_polygon_action)
+            self._toolbar.addAction(self._delete_selected_action)
+            self._toolbar.addAction(self._export_polygons_action)
 
-            self._toolbar.hide()
+            # Show toolbar by default
+            self._toolbar.show()
 
         # --- Dock widgets ---
 
@@ -2695,11 +2702,15 @@ if _QT_AVAILABLE:
 
             if checked:
                 canvas.enter_polygon_mode()
+                # Disable delete button while drawing (can't select polygons)
+                self._delete_selected_action.setEnabled(False)
                 self.statusBar().showMessage(
                     "Drawing Mode: Click to add vertex | Double-click or Enter to close | Esc to cancel", 0
                 )
             else:
                 canvas.exit_polygon_mode()
+                # Re-enable delete button when exiting drawing mode
+                self._delete_selected_action.setEnabled(True)
                 self.statusBar().showMessage(
                     "Selection Mode: Click polygon to select | Delete to remove | Ctrl+Z to undo | Ctrl+Y to redo", 3000
                 )
@@ -2729,6 +2740,20 @@ if _QT_AVAILABLE:
                 self.statusBar().showMessage("Redid last deletion", 2000)
             else:
                 self.statusBar().showMessage("Nothing to redo", 2000)
+        
+        def _on_delete_selected(self) -> None:
+            """Delete selected polygons from the active pane."""
+            pane_idx = self._viewer.active_pane
+            if pane_idx == 0:
+                canvas = self._viewer.left_viewer.canvas
+            else:
+                canvas = self._viewer.right_viewer.canvas
+            
+            deleted = canvas.delete_selected_polygons()
+            if deleted > 0:
+                self.statusBar().showMessage(f"Deleted {deleted} polygon(s)", 2000)
+            else:
+                self.statusBar().showMessage("No polygons selected", 2000)
 
         def _on_export_polygons(self) -> None:
             """Export all drawn polygons to GeoJSON."""

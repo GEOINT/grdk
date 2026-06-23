@@ -811,8 +811,8 @@ if _QT_AVAILABLE:
                 event.accept()
                 return
             
-            # Delete key to remove selected polygons
-            if event.key() == Qt.Key.Key_Delete:
+            # Delete key to remove selected polygons (only when NOT in drawing mode)
+            if event.key() == Qt.Key.Key_Delete and not self._polygon_state.active:
                 deleted = self.delete_selected_polygons()
                 if deleted > 0:
                     _log.info(f"Deleted {deleted} selected polygon(s)")
