@@ -2819,6 +2819,9 @@ if _QT_AVAILABLE:
                     item = create_polygon_item(canvas._scene, polygon)
                     canvas._polygon_state.polygon_items.append(item)
 
+                # Ensure imported polygons are selectable (not in drawing mode)
+                canvas._polygon_state.set_polygons_selectable(True)
+
                 # Show success message
                 if skipped:
                     msg = (
