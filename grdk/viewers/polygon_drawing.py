@@ -59,23 +59,26 @@ if _QT_AVAILABLE:
             Current polygon vertices in scene coordinates (col, row).
         completed_polygons : List[np.ndarray]
             Stored completed polygons as (N, 2) arrays in (row, col) format.
+        annotations : List[str]
+            Annotation labels for each completed polygon (parallel to completed_polygons).
         vertex_items : List[QGraphicsEllipseItem]
             Visual markers for vertices being drawn.
         rubber_band_item : Optional[QGraphicsLineItem]
             Preview line from last vertex to mouse cursor.
         polygon_items : List[QGraphicsPolygonItem]
             Rendered completed polygons.
-        deleted_stack : List[Tuple[np.ndarray, QGraphicsPolygonItem, Any]]
-            Stack of deleted polygons for redo (vertices, item, scene).
+        deleted_stack : List[Tuple[np.ndarray, QGraphicsPolygonItem, Any, str]]
+            Stack of deleted polygons for redo (vertices, item, scene, annotation).
         """
 
         active: bool = False
         vertices: List[Tuple[float, float]] = field(default_factory=list)
         completed_polygons: List[np.ndarray] = field(default_factory=list)
+        annotations: List[str] = field(default_factory=list)
         vertex_items: List[QGraphicsEllipseItem] = field(default_factory=list)
         rubber_band_item: Optional[QGraphicsLineItem] = None
         polygon_items: List[QGraphicsPolygonItem] = field(default_factory=list)
-        deleted_stack: List[Tuple[np.ndarray, QGraphicsPolygonItem]] = field(default_factory=list)
+        deleted_stack: List[Tuple[np.ndarray, QGraphicsPolygonItem, Any, str]] = field(default_factory=list)
 
         def clear_active_drawing(self) -> None:
             """Clear the current in-progress polygon."""
@@ -99,6 +102,7 @@ if _QT_AVAILABLE:
                 if scene is not None:
                     scene.removeItem(item)
             self.polygon_items.clear()
+            self.annotations.clear()
             self.deleted_stack.clear()  # Clear redo stack
         
         def remove_last_polygon(self) -> bool:
@@ -114,6 +118,7 @@ if _QT_AVAILABLE:
             
             # Remove from storage and save for redo
             vertices = self.completed_polygons.pop()
+            annotation = self.annotations.pop() if self.annotations else ""
             
             # Remove visual item and save for redo
             if self.polygon_items:
@@ -122,8 +127,8 @@ if _QT_AVAILABLE:
                 scene = item.scene()
                 if scene is not None:
                     scene.removeItem(item)
-                # Store item and scene for redo
-                self.deleted_stack.append((vertices, item, scene))
+                # Store item, scene, and annotation for redo
+                self.deleted_stack.append((vertices, item, scene, annotation))
             
             return True
         
@@ -138,11 +143,18 @@ if _QT_AVAILABLE:
             if not self.deleted_stack:
                 return False
             
-            # Pop from redo stack
-            vertices, item, scene = self.deleted_stack.pop()
+            # Pop from redo stack (handle both old and new tuple formats)
+            deleted = self.deleted_stack.pop()
+            if len(deleted) == 4:
+                vertices, item, scene, annotation = deleted
+            else:
+                # Legacy format without annotation
+                vertices, item, scene = deleted
+                annotation = ""
             
             # Restore to storage and visual items
             self.completed_polygons.append(vertices)
+            self.annotations.append(annotation)
             self.polygon_items.append(item)
             
             # Re-add to scene
@@ -169,6 +181,7 @@ if _QT_AVAILABLE:
             
             # Remove from storage and save for redo
             vertices = self.completed_polygons.pop(index)
+            annotation = self.annotations.pop(index) if index < len(self.annotations) else ""
             
             # Remove visual item and save for redo
             if index < len(self.polygon_items):
@@ -177,8 +190,8 @@ if _QT_AVAILABLE:
                 scene = item.scene()
                 if scene is not None:
                     scene.removeItem(item)
-                # Store item and scene for redo
-                self.deleted_stack.append((vertices, item, scene))
+                # Store item, scene, and annotation for redo
+                self.deleted_stack.append((vertices, item, scene, annotation))
             
             return True
         

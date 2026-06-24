@@ -51,7 +51,7 @@ def import_polygons_from_geojson(
     reader: Optional[Any],
     geolocation: Optional[Any],
     image_shape: Tuple[int, int],
-) -> Tuple[List[np.ndarray], List[str]]:
+) -> Tuple[List[np.ndarray], List[str], List[str]]:
     """Import polygons from GeoJSON with strict validation.
     
     Parameters
@@ -67,8 +67,9 @@ def import_polygons_from_geojson(
     
     Returns
     -------
-    tuple of (list of np.ndarray, list of str)
+    tuple of (list of np.ndarray, list of str, list of str)
         - Imported polygons as (N, 2) arrays in (row, col) format
+        - Imported annotations (parallel to polygons list)
         - List of warning messages about skipped polygons
     
     Raises
@@ -133,6 +134,7 @@ def import_polygons_from_geojson(
     
     # 4. Convert and validate each polygon
     imported = []
+    imported_annotations = []
     skipped = []
     
     for i, feature in enumerate(features):
@@ -166,7 +168,11 @@ def import_polygons_from_geojson(
                 skipped.append(f"Feature {feature_id}: outside image bounds")
                 continue
             
+            # Extract annotation from properties
+            annotation = feature.get('properties', {}).get('annotation', '')
+            
             imported.append(pixels)
+            imported_annotations.append(annotation)
             
         except Exception as e:
             _log.warning("Failed to import feature %s: %s", feature_id, e)
@@ -187,7 +193,7 @@ def import_polygons_from_geojson(
     
     _log.info("Imported %d polygon(s), skipped %d", len(imported), len(skipped))
     
-    return imported, skipped
+    return imported, imported_annotations, skipped
 
 
 def _get_image_geographic_bounds(

@@ -835,8 +835,9 @@ if _QT_AVAILABLE:
                 (y, x) for x, y in self._polygon_state.vertices
             ], dtype=np.float64)
             
-            # Store the completed polygon
+            # Store the completed polygon with empty annotation
             self._polygon_state.completed_polygons.append(vertices)
+            self._polygon_state.annotations.append("")
             
             # Render the polygon
             item = create_polygon_item(self._scene, vertices)

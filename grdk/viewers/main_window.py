@@ -605,6 +605,11 @@ if _QT_AVAILABLE:
             self._delete_selected_action.setToolTip("Delete Selected Polygons (Delete)")
             self._delete_selected_action.triggered.connect(self._on_delete_selected)
 
+            self._label_polygon_action = QAction("Label", self)
+            self._label_polygon_action.setShortcut(QKeySequence("L"))
+            self._label_polygon_action.setToolTip("Label Selected Polygon (L)")
+            self._label_polygon_action.triggered.connect(self._on_label_polygon)
+
             self._import_polygons_action = QAction("⇑", self)
             self._import_polygons_action.setToolTip("Import Polygons from GeoJSON...")
             self._import_polygons_action.triggered.connect(self._on_import_polygons)
@@ -687,6 +692,9 @@ if _QT_AVAILABLE:
             self._toolbar.addAction(self._undo_polygon_action)
             self._toolbar.addAction(self._redo_polygon_action)
             self._toolbar.addAction(self._delete_selected_action)
+            self._toolbar.addSeparator()
+            self._toolbar.addAction(self._label_polygon_action)
+            self._toolbar.addSeparator()
             self._toolbar.addAction(self._import_polygons_action)
             self._toolbar.addAction(self._export_polygons_action)
 
@@ -2760,6 +2768,76 @@ if _QT_AVAILABLE:
             else:
                 self.statusBar().showMessage("No polygons selected", 2000)
 
+        def _on_label_polygon(self) -> None:
+            """Label selected polygon(s) with annotation."""
+            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QComboBox, QPushButton, QHBoxLayout
+            
+            # Get active pane
+            pane_idx = self._viewer.active_pane
+            if pane_idx == 0:
+                canvas = self._viewer.left_viewer.canvas
+            else:
+                canvas = self._viewer.right_viewer.canvas
+            
+            # Find selected polygon(s)
+            selected_indices = []
+            for i, item in enumerate(canvas._polygon_state.polygon_items):
+                if item.isSelected():
+                    selected_indices.append(i)
+            
+            if not selected_indices:
+                QMessageBox.information(
+                    self, "No Selection", "Please select a polygon to label.",
+                )
+                return
+            
+            # Get existing unique annotations
+            existing_labels = sorted(set(
+                ann for ann in canvas._polygon_state.annotations if ann
+            ))
+            
+            # Create dialog
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Label Polygon")
+            layout = QVBoxLayout(dialog)
+            
+            # Instructions
+            if len(selected_indices) == 1:
+                label = QLabel(f"Enter annotation for polygon:")
+            else:
+                label = QLabel(f"Enter annotation for {len(selected_indices)} selected polygons:")
+            layout.addWidget(label)
+            
+            # Editable combobox with existing labels
+            combo = QComboBox()
+            combo.setEditable(True)
+            combo.addItems(existing_labels)
+            combo.setCurrentText("")  # Start empty
+            layout.addWidget(combo)
+            
+            # Buttons
+            button_layout = QHBoxLayout()
+            ok_button = QPushButton("OK")
+            cancel_button = QPushButton("Cancel")
+            button_layout.addWidget(ok_button)
+            button_layout.addWidget(cancel_button)
+            layout.addLayout(button_layout)
+            
+            ok_button.clicked.connect(dialog.accept)
+            cancel_button.clicked.connect(dialog.reject)
+            
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                annotation = combo.currentText().strip()
+                
+                # Apply annotation to all selected polygons
+                for idx in selected_indices:
+                    if idx < len(canvas._polygon_state.annotations):
+                        canvas._polygon_state.annotations[idx] = annotation
+                
+                self.statusBar().showMessage(
+                    f"Labeled {len(selected_indices)} polygon(s) with '{annotation}'", 2000
+                )
+
         def _on_import_polygons(self) -> None:
             """Import polygons from GeoJSON with strict validation."""
             from grdk.viewers.geojson_import import (
@@ -2804,15 +2882,16 @@ if _QT_AVAILABLE:
 
             try:
                 # Import with strict validation
-                polygons, skipped = import_polygons_from_geojson(
+                polygons, annotations, skipped = import_polygons_from_geojson(
                     filepath, reader, geo, image_shape,
                 )
 
                 # Add polygons to canvas
-                for polygon in polygons:
+                for polygon, annotation in zip(polygons, annotations):
                     # Polygons come as (row, col), need to add them to the canvas
                     # The canvas stores completed polygons internally
                     canvas._polygon_state.completed_polygons.append(polygon)
+                    canvas._polygon_state.annotations.append(annotation)
                     
                     # Create visual item
                     from grdk.viewers.polygon_drawing import create_polygon_item
@@ -2874,6 +2953,7 @@ if _QT_AVAILABLE:
                 geo = self._viewer.right_viewer._geolocation
 
             polygons = canvas.get_completed_polygons()
+            annotations = canvas._polygon_state.annotations
             if not polygons:
                 QMessageBox.information(
                     self, "No Polygons", "No polygons have been drawn yet.",
@@ -2921,7 +3001,7 @@ if _QT_AVAILABLE:
                     reader=reader,
                     geolocation=geo,
                     output_path=filepath,
-                    label_class="roi",
+                    annotations=annotations,
                 )
                 QMessageBox.information(
                     self, "Export Successful",

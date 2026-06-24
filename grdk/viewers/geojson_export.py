@@ -47,7 +47,7 @@ def export_polygons_to_geojson(
     reader: Any,
     geolocation: Optional[Any],
     output_path: str,
-    label_class: str = "roi",
+    annotations: Optional[List[str]] = None,
 ) -> None:
     """Export polygons to GeoJSON FeatureCollection.
 
@@ -65,8 +65,8 @@ def export_polygons_to_geojson(
         GRDL geolocation instance for coordinate transformation, or None.
     output_path : str
         Path to write the GeoJSON file (.geojson or .json).
-    label_class : str, optional
-        Label class name for all polygons (default: "roi").
+    annotations : Optional[List[str]], optional
+        Annotation labels for each polygon. If None, no annotations are added.
 
     Raises
     ------
@@ -83,12 +83,15 @@ def export_polygons_to_geojson(
             _log.warning(f"Skipping polygon {i}: fewer than 3 vertices")
             continue
 
+        # Get annotation for this polygon
+        annotation = annotations[i] if annotations and i < len(annotations) else ""
+
         feature = _polygon_to_feature(
             vertices=vertices,
             geolocation=geolocation,
             reader_meta=reader_meta,
-            label_class=label_class,
             feature_id=i,
+            annotation=annotation,
         )
         features.append(feature)
 
@@ -178,8 +181,8 @@ def _polygon_to_feature(
     vertices: np.ndarray,
     geolocation: Optional[Any],
     reader_meta: Dict[str, Any],
-    label_class: str,
     feature_id: int,
+    annotation: str = "",
 ) -> Dict[str, Any]:
     """Convert a polygon to a GeoJSON Feature.
 
@@ -191,10 +194,10 @@ def _polygon_to_feature(
         GRDL geolocation for coordinate transform, or None.
     reader_meta : Dict[str, Any]
         Reader metadata from _extract_reader_metadata.
-    label_class : str
-        Label class name.
     feature_id : int
         Unique feature ID.
+    annotation : str, optional
+        Annotation label for this polygon.
 
     Returns
     -------
@@ -231,7 +234,7 @@ def _polygon_to_feature(
             "coordinates": [geo_coords],  # Exterior ring
         },
         "properties": {
-            "label_class": label_class,
+            "annotation": annotation,
             "creation_timestamp": datetime.utcnow().isoformat() + 'Z',
             "pixel_vertices": pixel_coords,
             "coordinate_system": coordinate_system,
