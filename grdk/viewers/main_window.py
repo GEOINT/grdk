@@ -605,7 +605,11 @@ if _QT_AVAILABLE:
             self._delete_selected_action.setToolTip("Delete Selected Polygons (Delete)")
             self._delete_selected_action.triggered.connect(self._on_delete_selected)
 
-            self._export_polygons_action = QAction("⇪", self)
+            self._import_polygons_action = QAction("⇑", self)
+            self._import_polygons_action.setToolTip("Import Polygons from GeoJSON...")
+            self._import_polygons_action.triggered.connect(self._on_import_polygons)
+
+            self._export_polygons_action = QAction("⇓", self)
             self._export_polygons_action.setToolTip("Export Polygons to GeoJSON...")
             self._export_polygons_action.triggered.connect(self._on_export_polygons)
 
@@ -683,6 +687,7 @@ if _QT_AVAILABLE:
             self._toolbar.addAction(self._undo_polygon_action)
             self._toolbar.addAction(self._redo_polygon_action)
             self._toolbar.addAction(self._delete_selected_action)
+            self._toolbar.addAction(self._import_polygons_action)
             self._toolbar.addAction(self._export_polygons_action)
 
             # Show toolbar by default
@@ -2754,6 +2759,104 @@ if _QT_AVAILABLE:
                 self.statusBar().showMessage(f"Deleted {deleted} polygon(s)", 2000)
             else:
                 self.statusBar().showMessage("No polygons selected", 2000)
+
+        def _on_import_polygons(self) -> None:
+            """Import polygons from GeoJSON with strict validation."""
+            from grdk.viewers.geojson_import import (
+                import_polygons_from_geojson,
+                GeoJSONImportError,
+            )
+
+            # Get active pane
+            pane_idx = self._viewer.active_pane
+            if pane_idx == 0:
+                canvas = self._viewer.left_viewer.canvas
+                reader = self._viewer.left_viewer._reader
+                geo = self._viewer.left_viewer._geolocation
+            else:
+                canvas = self._viewer.right_viewer.canvas
+                reader = self._viewer.right_viewer._reader
+                geo = self._viewer.right_viewer._geolocation
+
+            # Get image shape for bounds checking
+            source = canvas.source_array
+            if source is not None:
+                image_shape = source.shape[:2]
+            elif hasattr(canvas, '_reader') and canvas._reader is not None:
+                # Tiled canvas case - get shape from canvas's reader
+                image_shape = canvas._reader.get_shape()[:2]
+            elif reader is not None:
+                # Fall back to viewer's reader
+                image_shape = reader.get_shape()[:2]
+            else:
+                QMessageBox.warning(
+                    self, "No Image", "No image is loaded in the active pane.",
+                )
+                return
+
+            # Prompt for GeoJSON file
+            filepath, _ = QFileDialog.getOpenFileName(
+                self, "Import Polygons from GeoJSON", "",
+                "GeoJSON Files (*.geojson *.json);;All Files (*)",
+            )
+            if not filepath:
+                return
+
+            try:
+                # Import with strict validation
+                polygons, skipped = import_polygons_from_geojson(
+                    filepath, reader, geo, image_shape,
+                )
+
+                # Add polygons to canvas
+                for polygon in polygons:
+                    # Polygons come as (row, col), need to add them to the canvas
+                    # The canvas stores completed polygons internally
+                    canvas._polygon_state.completed_polygons.append(polygon)
+                    
+                    # Create visual item
+                    from grdk.viewers.polygon_drawing import create_polygon_item
+                    item = create_polygon_item(canvas._scene, polygon)
+                    canvas._polygon_state.polygon_items.append(item)
+
+                # Ensure imported polygons are selectable (not in drawing mode)
+                canvas._polygon_state.set_polygons_selectable(True)
+
+                # Show success message
+                if skipped:
+                    msg = (
+                        f"Imported {len(polygons)} polygon(s).\n\n"
+                        f"Skipped {len(skipped)} polygon(s):\n" +
+                        "\n".join(f"  • {s}" for s in skipped[:5]) +
+                        ("\n  ..." if len(skipped) > 5 else "")
+                    )
+                    QMessageBox.warning(
+                        self, "Import Complete (with warnings)", msg,
+                    )
+                    self.statusBar().showMessage(
+                        f"Imported {len(polygons)}, skipped {len(skipped)} polygon(s)", 3000
+                    )
+                else:
+                    QMessageBox.information(
+                        self, "Import Successful",
+                        f"Imported {len(polygons)} polygon(s) from {filepath}",
+                    )
+                    self.statusBar().showMessage(
+                        f"Imported {len(polygons)} polygon(s)", 2000
+                    )
+
+            except GeoJSONImportError as e:
+                QMessageBox.critical(
+                    self, "Import Failed", str(e),
+                )
+                self.statusBar().showMessage("Import failed", 2000)
+            except Exception as e:
+                _log.error("Import error: %s", e, exc_info=True)
+                QMessageBox.critical(
+                    self, "Import Error",
+                    f"Unexpected error during import:\n\n{e}",
+                )
+                self.statusBar().showMessage("Import error", 2000)
 
         def _on_export_polygons(self) -> None:
             """Export all drawn polygons to GeoJSON."""

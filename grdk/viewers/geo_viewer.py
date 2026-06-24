@@ -548,6 +548,9 @@ if _QT_AVAILABLE:
                 # Update vector overlay geolocation
                 self._vector_overlay.set_geolocation(geolocation)
 
+                # Clear any existing polygons from previous image
+                self._canvas.clear_all_polygons()
+
                 # Extract and emit band info
                 self._band_info = get_band_info(reader)
                 _log.debug(
@@ -589,6 +592,9 @@ if _QT_AVAILABLE:
             self._metadata = None
             self._coord_bar.set_geolocation(geolocation)
             self._vector_overlay.set_geolocation(geolocation)
+
+            # Clear any existing polygons from previous image
+            self._canvas.clear_all_polygons()
 
             # Emit band info for the array
             if arr.ndim == 3:

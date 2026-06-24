@@ -16,13 +16,14 @@ The polygon editing toolbar (visible by default) contains all polygon tools with
 | **⟲** | Single Press | `Ctrl+Z` | Undo — remove last polygon |
 | **⟳** | Single Press | `Ctrl+Y` | Redo — restore last deletion |
 | **×** | Single Press | `Delete` | Delete — remove selected polygon(s) |
-| **⇪** | Single Press | — | Export — save to GeoJSON |
+| **⇑** | Single Press | — | Import — load from GeoJSON |
+| **⇓** | Single Press | — | Export — save to GeoJSON |
 
 **Hover over any button to see its full tooltip with keyboard shortcut.**
 
 **Toggle vs Single Press:**
 - **Toggle button** (◇ Draw): Stays pressed when active, shows visual feedback. Press again to deactivate.
-- **Single press buttons** (↶ ↷ × ⇓): Execute immediately, don't stay pressed.
+- **Single press buttons** (↶ ↷ × ⇑ ⇓): Execute immediately, don't stay pressed.
 
 ### GUI Workflow (ViewerMainWindow)
 
@@ -55,13 +56,23 @@ The polygon editing toolbar (visible by default) contains all polygon tools with
    - Click **×** (delete button) or press Delete to remove selected polygon(s)
    - You can select multiple polygons and delete them all at once
 
-6. **Export to GeoJSON**
+6. **Import from GeoJSON**
+   - Click the **⇑** (import button) in the toolbar
+   - Select a .geojson file
+   - System validates:
+     - GeoJSON structure is valid
+     - Coordinates can be converted (image has geolocation OR GeoJSON has pixel backup)
+     - Polygons overlap with image bounds
+   - Imported polygons are added to the canvas and can be edited/exported
+
+7. **Export to GeoJSON**
    - Click the **⇓** (export button) in the toolbar
    - Choose file location and name (extension auto-added)
    - Polygons are automatically converted to geographic coordinates (lat/lon) if geolocation is available
    - Falls back to pixel coordinates if no geolocation is available
+   - Both formats are saved for maximum compatibility
 
-7. **Clear All Polygons**
+8. **Clear All Polygons**
    - Tools menu → "Clear All Polygons" to remove all drawn polygons from the active pane
 
 ### Important Notes
@@ -71,7 +82,11 @@ The polygon editing toolbar (visible by default) contains all polygon tools with
   - **Selection Mode**: Press `D` to toggle off — cursor is arrow, click selects polygons, can delete with Delete key
   - This prevents accidental selection while drawing and allows layered/overlapping polygons
 - **Undo/Redo**: Ctrl+Z undoes the last polygon, Ctrl+Y redoes the last deletion (works in both modes)
-- **GeoJSON Import Not Yet Implemented**: The current version only supports **export**. To edit existing polygons, you'll need to redraw them manually. GeoJSON import is planned for a future release.
+- **Import Validation**: GeoJSON import performs strict validation:
+  - Rejects files where polygons are completely outside image bounds
+  - Rejects files when image has no geolocation and GeoJSON has no pixel backup
+  - Shows clear error messages explaining why import failed and how to fix it
+  - Imports visible polygons and warns about skipped ones when partially overlapping
 - **Double-click to close**: If double-click doesn't work reliably, use the **Enter** key instead to close the polygon
 - **Rubber-band preview**: A dashed yellow line shows from your last vertex to the cursor position while drawing
 
@@ -80,11 +95,32 @@ The polygon editing toolbar (visible by default) contains all polygon tools with
 ```python
 from grdk.viewers.image_canvas import ImageCanvas
 from grdk.viewers.geojson_export import export_polygons_to_geojson
+from grdk.viewers.geojson_import import import_polygons_from_geojson, GeoJSONImportError
 import numpy as np
 
 # Create a canvas and load an image
 canvas = ImageCanvas()
 canvas.set_array(my_image_array)
+
+# Import polygons from GeoJSON
+try:
+    polygons, skipped = import_polygons_from_geojson(
+        geojson_path="rois.geojson",
+        reader=my_reader,
+        geolocation=my_geolocation,
+        image_shape=my_image_array.shape[:2],
+    )
+    print(f"Imported {len(polygons)} polygons")
+    if skipped:
+        print(f"Skipped {len(skipped)} polygons: {skipped}")
+    
+    # Add to canvas
+    for polygon in polygons:
+        canvas._polygon_state.completed_polygons.append(polygon)
+        # Create visual item if needed
+        
+except GeoJSONImportError as e:
+    print(f"Import failed: {e}")
 
 # Enter drawing mode (polygons become non-selectable)
 canvas.enter_polygon_mode()
@@ -109,11 +145,11 @@ if canvas.redo_last_deletion():
 num_deleted = canvas.delete_selected_polygons()
 print(f"Deleted {num_deleted} polygon(s)")
 
-# Export to GeoJSON
+# Export to GeoJSON (saves both geographic AND pixel coordinates)
 export_polygons_to_geojson(
     polygons=polygons,
     reader=my_reader,
-    geolocation=my_geolocation,  # or None for pixel coords
+    geolocation=my_geolocation,  # or None for pixel coords only
     output_path="rois.geojson",
     label_class="roi",
 )
