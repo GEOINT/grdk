@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "grdk"
-version = "0.1.1"
+version = "0.1.2"
 description = "GEOINT Rapid Development Kit — GUI tooling for CUDA-optimized image processing workflow orchestration"
 readme = "README.md"
 license = {text = "MIT"}
