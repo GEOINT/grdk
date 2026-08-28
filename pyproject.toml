@@ -30,18 +30,21 @@ classifiers = [
 dependencies = [
     "numpy>=2.0.0",
     "scipy>=1.11.0",
+    "grdl>=0.7.3",
     "grdl-runtime>=0.1.2",
     "PyQt6>=6.5",
     "orange3>=3.36",
     "orange-widget-base",
     "napari>=0.4",
-    "grdl-runtime[gpu]>=0.1.2",
 ]
 [project.optional-dependencies]
 dev = [
     "pytest",
     "black",
     "mypy",
+]
+gpu = [
+    "grdl-runtime[gpu]>=0.1.2",
 ]
 
 [project.scripts]
