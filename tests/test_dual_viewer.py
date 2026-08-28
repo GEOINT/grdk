@@ -787,6 +787,44 @@ class TestSARDisplayFixes:
         assert result.dtype == np.uint8
         assert result.ndim == 2  # Single band, grayscale
 
+    def test_remap_enabled_for_polarimetric_float_reader(self):
+        """Polarimetric readers should enable remap even when dtype is real."""
+        from grdk.viewers.main_window import ViewerMainWindow
+
+        class _Channel:
+            def __init__(self, polarization: str) -> None:
+                self.polarization = polarization
+
+        class _Metadata:
+            def __init__(self) -> None:
+                self.channel_metadata = [_Channel("HH"), _Channel("HV")]
+                self.polarization = "HH"
+
+        class _Reader:
+            def __init__(self) -> None:
+                self.metadata = _Metadata()
+
+            def get_dtype(self):
+                return np.dtype("float32")
+
+        class _Controls:
+            def __init__(self) -> None:
+                self.enabled = None
+
+            def set_remap_enabled(self, enabled: bool) -> None:
+                self.enabled = enabled
+
+        class _Dock:
+            def __init__(self) -> None:
+                self._controls = _Controls()
+
+            def widget(self):
+                return self._controls
+
+        dock = _Dock()
+        ViewerMainWindow._update_remap_for_dock(dock, _Reader())
+        assert dock.widget().enabled is True
+
     def test_decline_dual_controls_still_work(self):
         """Declining dual-view for multiband SAR should not break controls."""
         from unittest.mock import patch
