@@ -186,7 +186,7 @@ Exported GeoJSON files follow this structure:
         "creation_timestamp": "2026-06-22T15:00:00Z",
         "pixel_vertices": [[row1, col1], [row2, col2], ...],
         "coordinate_system": "geographic",
-        "grdk_version": "0.1.0"
+        "grdk_version": "0.1.3"
       }
     }
   ]

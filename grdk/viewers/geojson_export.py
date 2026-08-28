@@ -39,6 +39,9 @@ from typing import Any, Dict, List, Optional
 # Third-party
 import numpy as np
 
+# GRDK internal
+from grdk import __version__ as GRDK_VERSION
+
 _log = logging.getLogger("grdk.geojson_export")
 
 
@@ -235,7 +238,7 @@ def _polygon_to_feature(
             "creation_timestamp": datetime.utcnow().isoformat() + 'Z',
             "pixel_vertices": pixel_coords,
             "coordinate_system": coordinate_system,
-            "grdk_version": "0.1.0",
+            "grdk_version": GRDK_VERSION,
         },
     }
 
