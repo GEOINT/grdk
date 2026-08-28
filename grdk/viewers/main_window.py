@@ -1304,15 +1304,14 @@ if _QT_AVAILABLE:
             except Exception:
                 pass
 
-            # Heuristic 2: PolarimetricMode recognises the sensor as SAR
+            # Heuristic 2: PolarimetricMode recognises the sensor as SAR.
+            # from_reader() returns a PolarimetricMode value for recognised
+            # SAR products and None when no polarization metadata is found.
             if not is_sar:
                 try:
                     from grdl.vocabulary import PolarimetricMode
                     mode = PolarimetricMode.from_reader(reader)
-                    if mode not in (
-                        PolarimetricMode.NONE,
-                        PolarimetricMode.UNKNOWN,
-                    ):
+                    if mode is not None:
                         is_sar = True
                 except Exception:
                     pass
