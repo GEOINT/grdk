@@ -2,7 +2,12 @@
 
 All notable changes to GRDK are documented in this file.
 
-## [Unreleased]
+## [0.1.4] - 2026-09-09
+
+### Added
+- **Synthetic Generation Widget** (`OWSyntheticGen`): Orange UI widget to configure and execute GRDL synthetic generation workflows.
+
+## [0.1.3] - 2026-06-23
 
 ### Added
 
