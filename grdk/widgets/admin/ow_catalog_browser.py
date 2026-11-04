@@ -138,15 +138,21 @@ class OWCatalogBrowser(OWBaseWidget):
     def _open_catalog(self) -> None:
         """Open the artifact catalog database."""
         try:
-            from grdl_rt.catalog.database import ArtifactCatalog
-            from grdl_rt.catalog.resolver import resolve_catalog_path
-
-            path = resolve_catalog_path()
-            self._catalog = ArtifactCatalog(db_path=path)
+            from grdk.catalog.manager import CatalogManager
+            mgr = CatalogManager()
+            self._catalog = mgr.get_catalog()
             self.Error.catalog_error.clear()
-        except Exception as e:
-            self.Error.catalog_error(str(e))
-            self._catalog = None
+        except Exception:
+            try:
+                from grdl_rt.catalog.database import ArtifactCatalog
+                from grdl_rt.catalog.resolver import resolve_catalog_path
+
+                path = resolve_catalog_path()
+                self._catalog = ArtifactCatalog(db_path=path)
+                self.Error.catalog_error.clear()
+            except Exception as e:
+                self.Error.catalog_error(str(e))
+                self._catalog = None
 
     def _on_search(self) -> None:
         """Execute a search query."""

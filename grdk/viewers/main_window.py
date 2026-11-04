@@ -250,6 +250,14 @@ if _QT_AVAILABLE:
             self._ortho_results: dict = {}       # {pane: OrthoResult}
             self._rgb_result: Optional[tuple] = None  # (ndarray, geo)
 
+            # Catalog Manager & Background Invalidation Worker
+            from grdk.catalog.manager import CatalogManager
+            from grdk.catalog.ui import CatalogSyncWorker
+            self._catalog_manager = CatalogManager()
+            self._catalog_sync_worker = CatalogSyncWorker(self._catalog_manager)
+            self._catalog_sync_worker.sync_finished.connect(self._on_catalog_sync_finished)
+            self._catalog_sync_worker.start()
+
             # Polarimetric decomposition worker (Pauli / H-Alpha)
             self._pauli_worker: Optional[Any] = None
             self._pauli_readers_to_close: list = []
@@ -584,6 +592,17 @@ if _QT_AVAILABLE:
             self._pauli_action.setEnabled(False)
             self._pauli_action.triggered.connect(self._on_pauli_decomp)
 
+            # Catalog Actions
+            self._run_catalog_action = QAction("&Run from Catalog...", self)
+            self._run_catalog_action.setEnabled(False)
+            self._run_catalog_action.triggered.connect(self._on_run_from_catalog)
+
+            self._manage_catalogs_action = QAction("&Manage Catalogs...", self)
+            self._manage_catalogs_action.triggered.connect(self._on_manage_catalogs)
+
+            self._reload_catalogs_action = QAction("Re&load Catalogs", self)
+            self._reload_catalogs_action.triggered.connect(self._on_reload_catalogs)
+
             self._draw_polygon_action = QAction("✎", self)
             self._draw_polygon_action.setCheckable(True)
             self._draw_polygon_action.setShortcut("D")
@@ -656,6 +675,13 @@ if _QT_AVAILABLE:
             tools_menu.addAction(self._clear_polygons_action)
             tools_menu.addSeparator()
             tools_menu.addAction(self._export_data_action)
+            tools_menu.addSeparator()
+
+            catalog_menu = tools_menu.addMenu("From &Catalog")
+            catalog_menu.addAction(self._run_catalog_action)
+            catalog_menu.addSeparator()
+            catalog_menu.addAction(self._manage_catalogs_action)
+            catalog_menu.addAction(self._reload_catalogs_action)
 
             view_menu = self.menuBar().addMenu("&View")
             view_menu.addAction(self._fit_action)
@@ -1495,6 +1521,17 @@ if _QT_AVAILABLE:
                 )
             )
             self._show_metadata_action.setEnabled(has_any_reader)
+
+            # Catalog run action: enabled when active pane has data
+            active_v = self._viewer.active_viewer
+            has_active_data = (
+                active_v is not None
+                and (
+                    active_v._reader is not None
+                    or self._get_source_array(active_v) is not None
+                )
+            )
+            self._run_catalog_action.setEnabled(has_active_data)
 
         # --- Pauli / H-Alpha Decomposition ---
 
@@ -2550,6 +2587,132 @@ if _QT_AVAILABLE:
                 self, "Export Data",
                 "No ortho or RGB results to export.\n"
                 "Run Orthorectify or Combine to RGB first.",
+            )
+
+        # --- Catalog Integration Handlers ---
+
+        def _on_catalog_sync_finished(self, was_updated: bool, total_items: int) -> None:
+            """Callback from background catalog synchronization."""
+            if was_updated:
+                self.statusBar().showMessage(
+                    f"Catalog cache updated ({total_items} items)", 4000
+                )
+                _log.info("Catalog sync finished (updated: %d items)", total_items)
+            else:
+                _log.debug("Catalog sync check complete (up-to-date: %d items)", total_items)
+
+        def _on_run_from_catalog(self) -> None:
+            """Open the Catalog Runner dialog to execute a processor or workflow."""
+            from grdk.catalog.ui import CatalogRunnerDialog
+
+            active_v = self._viewer.active_viewer
+            if active_v is None:
+                return
+
+            def _get_active_array():
+                # Check for direct array or reader chip
+                arr = self._get_source_array(active_v)
+                if arr is not None:
+                    return arr
+                reader = active_v._reader
+                if reader is not None:
+                    try:
+                        shape = reader.get_shape()
+                        rows = shape[-2] if len(shape) >= 2 else shape[0]
+                        cols = shape[-1] if len(shape) >= 2 else shape[1]
+                        return reader.read_chip(0, rows, 0, cols)
+                    except Exception as e:
+                        _log.error("Could not read chip from active reader: %s", e)
+                        return None
+                return None
+
+            dlg = CatalogRunnerDialog(
+                manager=self._catalog_manager,
+                source_array_provider=_get_active_array,
+                execution_callback=self._on_catalog_result_ready,
+                parent=self,
+            )
+            dlg.exec()
+
+        def _on_catalog_result_ready(self, result_arr: Any, artifact_name: str) -> None:
+            """Receive execution output from CatalogRunnerDialog and display it."""
+            import gc
+            import numpy as np
+            from grdk.catalog.manager import CatalogPreferencesManager
+
+            mode = CatalogPreferencesManager.get_output_destination_mode()
+            geo = self._viewer.geolocation
+
+            if mode == "dual":
+                # Ensure dual mode is enabled
+                if self._viewer.mode != "dual":
+                    self._viewer.set_mode("dual")
+                    self._toggle_dual_action.blockSignals(True)
+                    self._toggle_dual_action.setChecked(True)
+                    self._toggle_dual_action.blockSignals(False)
+
+                target_pane = 1  # Right pane
+                self._viewer.set_array(result_arr, geolocation=geo, pane=target_pane)
+                self._sync_display_controls(target_pane)
+                self._update_colorbar_state(target_pane)
+                self._update_tools_state()
+                self.statusBar().showMessage(
+                    f"Catalog: {artifact_name} displayed in right pane"
+                )
+            else:
+                # Default: Replace active pane and clean up memory
+                target_pane = self._viewer.active_pane
+                active_v = self._viewer.active_viewer
+
+                # Explicit memory cleanup of previous viewer state
+                if active_v is not None:
+                    if hasattr(active_v.canvas, "_clear_tiles"):
+                        active_v.canvas._clear_tiles()
+                    if active_v._reader is not None:
+                        try:
+                            active_v._reader.close()
+                        except Exception:
+                            pass
+                        active_v._reader = None
+                    if hasattr(active_v.canvas, "_source"):
+                        active_v.canvas._source = None
+                    if hasattr(active_v.canvas, "_source_array"):
+                        active_v.canvas._source_array = None
+
+                # Clean up cached ortho / rgb data for this pane
+                self._ortho_results.pop(target_pane, None)
+                self._decomp_state[target_pane] = None
+                self._pane_pol_names[target_pane] = None
+
+                # Force Python & Qt garbage collection
+                gc.collect()
+
+                # Display new result
+                self._viewer.set_array(result_arr, geolocation=geo, pane=target_pane)
+                self._sync_display_controls(target_pane)
+                self._update_colorbar_state(target_pane)
+                self._update_tools_state()
+                self.statusBar().showMessage(
+                    f"Catalog: {artifact_name} replaced active pane (memory cleaned)"
+                )
+
+        def _on_manage_catalogs(self) -> None:
+            """Open the Catalog Management configuration dialog."""
+            from grdk.catalog.ui import CatalogManagementDialog
+            dlg = CatalogManagementDialog(self._catalog_manager, self)
+            dlg.catalogs_changed.connect(self._update_tools_state)
+            dlg.exec()
+
+        def _on_reload_catalogs(self) -> None:
+            """Explicitly reload all configured catalogs immediately."""
+            artifacts = self._catalog_manager.refresh_cache(force=True)
+            self._update_tools_state()
+            self.statusBar().showMessage(
+                f"Catalogs reloaded ({len(artifacts)} total artifacts)", 4000
+            )
+            QMessageBox.information(
+                self, "Catalogs Reloaded",
+                f"Successfully reloaded all catalogs.\nFound {len(artifacts)} total artifacts."
             )
 
         def _on_show_metadata(self) -> None:
