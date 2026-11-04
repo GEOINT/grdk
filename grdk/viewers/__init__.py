@@ -96,8 +96,16 @@ def show(data, *, geolocation=None, title=None, block=True):
     app = QApplication.instance()
     created_app = False
     if app is None:
+        try:
+            from grdk.fonts import configure_qt_font_environment, register_application_fonts
+            configure_qt_font_environment()
+        except Exception:
+            register_application_fonts = None
+
         app = QApplication(sys.argv)
         created_app = True
+        if register_application_fonts:
+            register_application_fonts()
 
     window = ViewerMainWindow()
 

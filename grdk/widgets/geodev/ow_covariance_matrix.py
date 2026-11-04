@@ -122,6 +122,7 @@ class _MatrixWorker(QThread):
             self.log_message.emit(f"  Shape: {shh.shape[0]}\u00d7{shh.shape[1]}")
 
             # Step 2 — build the matrix
+            channels = np.stack([shh, shv, svh, svv], axis=0)
             if self._matrix_type == 'T3':
                 from grdl.image_processing.decomposition.pol_matrix import (
                     CoherencyMatrix,
@@ -130,9 +131,7 @@ class _MatrixWorker(QThread):
                     f"Building T3 coherency matrix "
                     f"(window={self._window_size})…"
                 )
-                mat = CoherencyMatrix(window_size=self._window_size).compute(
-                    shh, shv, svh, svv
-                )
+                mat = CoherencyMatrix(window_size=self._window_size).compute(channels)
             else:
                 from grdl.image_processing.decomposition.pol_matrix import (
                     CovarianceMatrix,
@@ -141,9 +140,7 @@ class _MatrixWorker(QThread):
                     f"Building C3 covariance matrix "
                     f"(window={self._window_size})…"
                 )
-                mat = CovarianceMatrix(window_size=self._window_size).compute(
-                    shh, shv, svh, svv
-                )
+                mat = CovarianceMatrix(window_size=self._window_size).compute(channels)
 
             self.log_message.emit(
                 f"Matrix computed. Shape: {mat.shape}  dtype={mat.dtype}"

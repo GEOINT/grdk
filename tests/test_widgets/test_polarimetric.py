@@ -151,7 +151,8 @@ def test_t3_coherency_matrix_shape():
         from grdl.image_processing.decomposition.pol_matrix import CoherencyMatrix
 
         t3_computer = CoherencyMatrix(window_size=5)
-        t3 = t3_computer.compute(shh, shv, svh, svv)
+        channels = np.stack([shh, shv, svh, svv], axis=0)
+        t3 = t3_computer.compute(channels)
 
         # Verify shape: (3, 3, rows, cols)
         assert t3.shape[0] == 3
@@ -187,7 +188,8 @@ def test_pauli_decomposition_produces_rgb():
 
         # Compute T3
         t3_computer = CoherencyMatrix(window_size=3)
-        t3 = t3_computer.compute(shh, shv, svh, svv)
+        channels = np.stack([shh, shv, svh, svv], axis=0)
+        t3 = t3_computer.compute(channels)
 
         # Extract diagonal (Pauli powers)
         surface_pwr = t3[0, 0].real

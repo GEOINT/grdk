@@ -2,3 +2,4 @@ include README.md
 include CHANGELOG.md
 include LICENSE
 recursive-include docs *.md
+recursive-include grdk/resources/fonts *.ttf LICENSE

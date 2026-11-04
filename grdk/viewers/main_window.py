@@ -3064,7 +3064,16 @@ if _QT_AVAILABLE:
         _log = logging.getLogger("grdk.viewer")
         _log.info("grdk-viewer starting, log level=%s", args.log_level)
 
+        # Ensure Qt font environment & bundled offline fonts are configured
+        try:
+            from grdk.fonts import configure_qt_font_environment, register_application_fonts
+            configure_qt_font_environment()
+        except Exception:
+            register_application_fonts = None
+
         app = QApplication(sys.argv)
+        if register_application_fonts:
+            register_application_fonts()
         window = ViewerMainWindow()
 
         if args.file is not None:

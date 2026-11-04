@@ -19,3 +19,20 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+--------------------------------------------------------------------------------
+Third-Party Font Licensing Notice (DejaVu Fonts)
+--------------------------------------------------------------------------------
+This project distributes and bundles DejaVu Fonts (located in grdk/resources/fonts),
+which are based on Bitstream Vera and Arev fonts:
+
+- Bitstream Vera Fonts Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved.
+  Bitstream Vera is a trademark of Bitstream, Inc.
+- Arev Fonts Copyright (c) 2006 by Tavmjong Bah. All Rights Reserved.
+- DejaVu changes and TeX Gyre DJV Math are in the public domain.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the fonts and associated documentation files, to reproduce and distribute
+the font software, subject to the condition that the copyright and trademark
+notices and permission notices are included in all copies. See full license in
+grdk/resources/fonts/LICENSE.

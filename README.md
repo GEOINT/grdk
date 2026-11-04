@@ -522,3 +522,7 @@ See [CLAUDE.md](CLAUDE.md#dependency-management) for detailed dependency managem
 ## License
 
 MIT License. Copyright (c) 2026 geoint.org. See [LICENSE](LICENSE).
+
+### Third-Party Licenses
+
+- **DejaVu Fonts** (`grdk/resources/fonts/`): Released under the Bitstream Vera and Arev Font Licenses (permissive open-source license allowing free reproduction and redistribution within software packages). Full license text is available in [`grdk/resources/fonts/LICENSE`](grdk/resources/fonts/LICENSE).

@@ -18,6 +18,13 @@ def install():
     """
     os.environ["QT_API"] = "pyqt6"
 
+    # Configure font environment for offline and embedded deployment
+    try:
+        from grdk.fonts import configure_qt_font_environment
+        configure_qt_font_environment()
+    except Exception:
+        pass
+
     import AnyQt._api as _api
 
     if _api.USED_API != _api.QT_API_PYQT6:
