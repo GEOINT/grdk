@@ -506,13 +506,11 @@ if _QT_AVAILABLE:
         def _configure_sentinel1(
             self, filepath: str, pane: int,
         ) -> None:
-            """Offer swath selection and enable burst masking for S1 SLC.
+            """Enable burst masking for Sentinel-1 SLC without intrusive popups.
 
-            Called immediately after ``open_file()`` succeeds.  If the
-            reader is a ``Sentinel1SLCReader`` with multiple swaths,
-            prompts the user to choose one.  Always enables burst
-            valid-sample masking so that blank lines at burst boundaries
-            are zeroed.
+            Called immediately after ``open_file()`` succeeds. Automatically
+            retains the default swath (or swath 0) and enables burst
+            valid-sample masking silently without interrupting user flow.
             """
             viewer = (
                 self._viewer.left_viewer if pane == 0
@@ -526,30 +524,11 @@ if _QT_AVAILABLE:
             except ImportError:
                 return
 
-            swaths = reader.get_available_swaths()
-            if len(swaths) > 1:
-                from PyQt6.QtWidgets import QInputDialog
-                current = getattr(reader, '_swath', swaths[0])
-                idx = swaths.index(current) if current in swaths else 0
-                choice, ok = QInputDialog.getItem(
-                    self, "Select Swath",
-                    f"Available swaths: {', '.join(swaths)}\n"
-                    "Select swath:",
-                    swaths, idx, False,
-                )
-                if ok and choice != current:
-                    from grdk.viewers.geo_viewer import create_geolocation
-                    new_reader = Sentinel1SLCReader(
-                        filepath,
-                        swath=choice,
-                        polarization=reader._polarization,
-                    )
-                    new_reader.set_apply_valid_mask(True)
-                    geo = create_geolocation(new_reader)
-                    self.open_reader(new_reader, geolocation=geo, pane=pane)
-                    return
-            # Same swath (or single swath) — just enable masking
-            reader.set_apply_valid_mask(True)
+            # Silent configuration: apply valid mask directly
+            try:
+                reader.set_apply_valid_mask(True)
+            except Exception:
+                pass
 
         def set_array(
             self,
@@ -639,6 +618,16 @@ if _QT_AVAILABLE:
                 self._on_open_right_dir,
             )
             self._open_right_dir_action.setEnabled(False)
+
+            self._close_image_action = QAction("&Close Image", self)
+            self._close_image_action.setShortcut(QKeySequence("Ctrl+W"))
+            self._close_image_action.setToolTip("Close current image in active pane (Ctrl+W)")
+            self._close_image_action.triggered.connect(lambda: self.close_image(self._viewer.active_pane))
+
+            self._close_all_images_action = QAction("Close &All Images", self)
+            self._close_all_images_action.setShortcut(QKeySequence("Ctrl+Shift+W"))
+            self._close_all_images_action.setToolTip("Close all open images across panes (Ctrl+Shift+W)")
+            self._close_all_images_action.triggered.connect(self.close_all_images)
 
             self._load_vector_action = QAction("Load &GeoJSON...", self)
             self._load_vector_action.setShortcut(QKeySequence("Ctrl+G"))
@@ -744,11 +733,21 @@ if _QT_AVAILABLE:
             self._open_orange_action = QAction("&Open in Orange Canvas...", self)
             self._open_orange_action.triggered.connect(self._on_open_orange_canvas)
 
-            self._draw_polygon_action = QAction("✎", self)
+            self._draw_point_action = QAction("• Point", self)
+            self._draw_point_action.setCheckable(True)
+            self._draw_point_action.setToolTip("Draw Point Feature")
+            self._draw_point_action.triggered.connect(lambda c: self._on_toggle_geometry_mode("point", c))
+
+            self._draw_line_action = QAction("╱ Line", self)
+            self._draw_line_action.setCheckable(True)
+            self._draw_line_action.setToolTip("Draw Polyline Feature")
+            self._draw_line_action.triggered.connect(lambda c: self._on_toggle_geometry_mode("line", c))
+
+            self._draw_polygon_action = QAction("▰ Polygon", self)
             self._draw_polygon_action.setCheckable(True)
             self._draw_polygon_action.setShortcut("D")
-            self._draw_polygon_action.setToolTip("Draw Polygon (D)")
-            self._draw_polygon_action.triggered.connect(self._on_toggle_polygon_mode)
+            self._draw_polygon_action.setToolTip("Draw Polygon Feature (D)")
+            self._draw_polygon_action.triggered.connect(lambda c: self._on_toggle_geometry_mode("polygon", c))
 
             self._undo_polygon_action = QAction("⟲", self)
             self._undo_polygon_action.setShortcut(QKeySequence("Ctrl+Z"))
@@ -800,6 +799,9 @@ if _QT_AVAILABLE:
             file_menu.addAction(self._open_right_action)
             file_menu.addAction(self._open_right_dir_action)
             file_menu.addSeparator()
+            file_menu.addAction(self._close_image_action)
+            file_menu.addAction(self._close_all_images_action)
+            file_menu.addSeparator()
             file_menu.addAction(self._load_vector_action)
             file_menu.addSeparator()
             file_menu.addAction(self._show_metadata_action)
@@ -850,31 +852,52 @@ if _QT_AVAILABLE:
         # --- Toolbar ---
 
         def _create_toolbar(self) -> None:
-            """Build the polygon editing toolbar."""
-            from PyQt6.QtWidgets import QLabel
-            
-            self._toolbar = QToolBar("Polygon Tools", self)
+            """Build the analyst ribbon toolbar with file, archetypes, and vector controls."""
+            from PyQt6.QtWidgets import QLabel, QComboBox
+            from grdk.viewers.archetypes import ArchetypeManager, BUILTIN_ARCHETYPES
+
+            self._toolbar = QToolBar("Analyst Ribbon", self)
             self._toolbar.setMovable(False)
-            self._toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            self._toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             self.addToolBar(self._toolbar)
 
-            # Add label to identify toolbar purpose
-            label = QLabel("  Polygons:  ")
-            label.setStyleSheet("QLabel { font-weight: bold; color: #555; }")
-            self._toolbar.addWidget(label)
-            
-            # Only polygon editing tools
+            # File Section
+            self._toolbar.addAction(self._open_action)
+            self._toolbar.addAction(self._close_image_action)
+            self._toolbar.addSeparator()
+
+            # Archetype Selector Section
+            arch_label = QLabel("  Archetype: ")
+            arch_label.setStyleSheet("font-weight: bold; color: #444;")
+            self._toolbar.addWidget(arch_label)
+
+            self._archetype_combo = QComboBox(self)
+            self._archetype_manager = ArchetypeManager()
+            for arch_name in self._archetype_manager.archetypes:
+                self._archetype_combo.addItem(arch_name)
+            self._archetype_combo.currentIndexChanged.connect(self._on_archetype_selected)
+            self._toolbar.addWidget(self._archetype_combo)
+            self._toolbar.addSeparator()
+
+            # Vector Space Geometry Section
+            geom_label = QLabel("  Vector Markup: ")
+            geom_label.setStyleSheet("font-weight: bold; color: #444;")
+            self._toolbar.addWidget(geom_label)
+
+            self._toolbar.addAction(self._draw_point_action)
+            self._toolbar.addAction(self._draw_line_action)
             self._toolbar.addAction(self._draw_polygon_action)
             self._toolbar.addAction(self._undo_polygon_action)
             self._toolbar.addAction(self._redo_polygon_action)
             self._toolbar.addAction(self._delete_selected_action)
-            self._toolbar.addSeparator()
             self._toolbar.addAction(self._label_polygon_action)
             self._toolbar.addSeparator()
             self._toolbar.addAction(self._import_polygons_action)
             self._toolbar.addAction(self._export_polygons_action)
+            self._toolbar.addSeparator()
 
-            # Show toolbar by default
+            # Exploitation quick action
+            self._toolbar.addAction(self._toggle_dual_action)
             self._toolbar.show()
 
         # --- Dock widgets ---
@@ -3192,28 +3215,69 @@ if _QT_AVAILABLE:
 
         # --- Polygon Drawing ---
 
-        def _on_toggle_polygon_mode(self, checked: bool) -> None:
-            """Toggle polygon drawing mode on the active pane."""
+        def _on_archetype_selected(self, index: int) -> None:
+            """Apply the selected visualization archetype layout."""
+            if not hasattr(self, '_archetype_manager'):
+                return
+            arch_name = self._archetype_combo.currentText()
+            arch = self._archetype_manager.get_archetype(arch_name)
+            if not arch:
+                return
+
+            active_canvas = self._viewer.active_canvas
+            from dataclasses import replace
+            s = active_canvas.display_settings
+            s = replace(
+                s,
+                colormap=arch.display.colormap,
+                stretch_mode=arch.display.stretch_mode,
+                percentile_low=arch.display.percentile_low,
+                percentile_high=arch.display.percentile_high,
+                gamma=arch.display.gamma,
+                contrast=arch.display.contrast,
+                brightness=arch.display.brightness,
+                invert_colormap=arch.display.invert,
+            )
+            active_canvas.set_display_settings(s)
+            self._sync_display_controls(self._viewer.active_pane)
+            self.statusBar().showMessage(f"Applied Archetype: {arch.name} - {arch.description}", 4000)
+
+        def _on_toggle_geometry_mode(self, mode: str, checked: bool) -> None:
+            """Toggle drawing mode for points, lines, or polygons."""
             pane_idx = self._viewer.active_pane
-            if pane_idx == 0:
-                canvas = self._viewer.left_viewer.canvas
-            else:
-                canvas = self._viewer.right_viewer.canvas
+            canvas = self._viewer.left_viewer.canvas if pane_idx == 0 else self._viewer.right_viewer.canvas
+
+            # Uncheck other drawing mode actions
+            actions = {
+                "point": getattr(self, '_draw_point_action', None),
+                "line": getattr(self, '_draw_line_action', None),
+                "polygon": getattr(self, '_draw_polygon_action', None),
+            }
+            for k, act in actions.items():
+                if act is not None and k != mode:
+                    act.blockSignals(True)
+                    act.setChecked(False)
+                    act.blockSignals(False)
 
             if checked:
-                canvas.enter_polygon_mode()
-                # Disable delete button while drawing (can't select polygons)
+                canvas.enter_polygon_mode(mode=mode)
                 self._delete_selected_action.setEnabled(False)
-                self.statusBar().showMessage(
-                    "Drawing Mode: Click to add vertex | Double-click or Enter to close | Esc to cancel", 0
-                )
+                if mode == "point":
+                    msg = "Point Mode: Click on image to place point annotation | Esc to cancel"
+                elif mode == "line":
+                    msg = "Polyline Mode: Click to add vertices | Double-click or Enter to finish | Esc to cancel"
+                else:
+                    msg = "Polygon Mode: Click to add vertices | Double-click or Enter to close | Esc to cancel"
+                self.statusBar().showMessage(msg, 0)
             else:
                 canvas.exit_polygon_mode()
-                # Re-enable delete button when exiting drawing mode
                 self._delete_selected_action.setEnabled(True)
                 self.statusBar().showMessage(
-                    "Selection Mode: Click polygon to select | Delete to remove | Ctrl+Z to undo | Ctrl+Y to redo", 3000
+                    "Selection Mode: Click feature to select | Delete to remove | Ctrl+Z to undo | Ctrl+Y to redo", 3000
                 )
+
+        def _on_toggle_polygon_mode(self, checked: bool) -> None:
+            self._on_toggle_geometry_mode("polygon", checked)
         
         def _on_undo_polygon(self) -> None:
             """Undo the most recently drawn polygon on the active pane."""

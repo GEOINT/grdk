@@ -3,8 +3,9 @@
 Band Info - Extract named band metadata from any grdl ImageReader.
 
 Provides a universal ``get_band_info()`` function that dispatches by reader
-type to extract human-readable band names (polarizations, spectral band
-IDs, etc.) for use in the viewer's band selector UI.
+type and reader channel metadata to extract human-readable band names
+(wavelengths, polarizations, spectral band IDs, etc.) for use in the viewer's
+band selector UI.
 
 Dependencies
 ------------
@@ -19,18 +20,10 @@ License
 MIT License
 Copyright (c) 2024 geoint.org
 See LICENSE file for full text.
-
-Created
--------
-2026-02-18
-
-Modified
---------
-2026-02-18
 """
 
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any, List, Optional
 
 
 @dataclass
@@ -42,22 +35,55 @@ class BandInfo:
     index : int
         0-based band index for ``read_chip(bands=[index])``.
     name : str
-        Short display name, e.g. ``"HH"``, ``"B04"``, ``"Band 0"``.
+        Display name, e.g. ``"Band 1 (503.0 nm)"``, ``"HH"``, ``"B04"``.
     description : str
-        Longer description, e.g. ``"Polarization HH"``, ``"Red (665 nm)"``.
+        Longer description, e.g. ``"Green (503.0 nm)"``, ``"Polarization HH"``.
+    wavelength: Optional[float]
+        Center wavelength in nanometers (if optical/spectral).
+    polarization: Optional[str]
+        Polarization code (if SAR).
     """
 
     index: int
     name: str
     description: str = ""
+    wavelength: Optional[float] = None
+    polarization: Optional[str] = None
+
+
+def _wavelength_to_color_label(nm: float) -> str:
+    """Return a descriptive spectral regime/color label for a wavelength in nm."""
+    if nm < 380:
+        return "UV"
+    elif 380 <= nm < 450:
+        return "Violet"
+    elif 450 <= nm < 495:
+        return "Blue"
+    elif 495 <= nm < 570:
+        return "Green"
+    elif 570 <= nm < 590:
+        return "Yellow"
+    elif 590 <= nm < 620:
+        return "Orange"
+    elif 620 <= nm < 750:
+        return "Red"
+    elif 750 <= nm < 1100:
+        return "NIR"
+    elif 1100 <= nm < 3000:
+        return "SWIR"
+    elif 3000 <= nm < 5000:
+        return "MWIR"
+    elif 5000 <= nm <= 14000:
+        return "LWIR"
+    return ""
 
 
 def get_band_info(reader: Any) -> List[BandInfo]:
     """Extract named band information from any grdl reader.
 
-    Dispatches by reader class to extract sensor-specific band names.
-    Falls back to generic ``Band 0``, ``Band 1``, etc. for unknown
-    reader types.
+    Dispatches by reader metadata (channel_metadata, channels, bands)
+    and reader class to extract sensor- and modality-specific band names.
+    Falls back to generic ``Band 1``, etc. for unknown reader types.
 
     Parameters
     ----------
@@ -69,6 +95,40 @@ def get_band_info(reader: Any) -> List[BandInfo]:
     List[BandInfo]
         One entry per band, ordered by band index.
     """
+    # 1. First priority: Check canonical reader.metadata.channel_metadata
+    meta = getattr(reader, 'metadata', None)
+    channel_meta = getattr(meta, 'channel_metadata', None) if meta is not None else None
+    if channel_meta and len(channel_meta) > 0:
+        band_infos: List[BandInfo] = []
+        for i, ch in enumerate(channel_meta):
+            idx = getattr(ch, 'index', i)
+            extras = getattr(ch, 'extras', {}) or {}
+            raw_wl = extras.get('wavelength') or getattr(ch, 'wavelength', None)
+            wl: Optional[float] = None
+            if raw_wl is not None:
+                try:
+                    wl = float(raw_wl)
+                except (ValueError, TypeError):
+                    wl = None
+
+            pol = getattr(ch, 'polarization', None)
+            name_attr = getattr(ch, 'name', '') or f'band_{idx + 1}'
+
+            # Formatting
+            if wl is not None:
+                color_name = _wavelength_to_color_label(wl)
+                display_name = f"Band {idx + 1} ({wl:.1f} nm)"
+                desc = f"{color_name} ({wl:.1f} nm)" if color_name else f"{wl:.1f} nm"
+                band_infos.append(BandInfo(index=idx, name=display_name, description=desc, wavelength=wl, polarization=pol))
+            elif pol:
+                display_name = f"Band {idx + 1} ({pol})"
+                desc = f"Polarization {pol}"
+                band_infos.append(BandInfo(index=idx, name=display_name, description=desc, wavelength=None, polarization=pol))
+            else:
+                display_name = f"Band {idx + 1} ({name_attr})"
+                band_infos.append(BandInfo(index=idx, name=display_name, description=name_attr, wavelength=None, polarization=None))
+        return band_infos
+
     # --- BIOMASS L1: polarization channels (HH, HV, VH, VV) ---
     try:
         from grdl.IO.sar.biomass import BIOMASSL1Reader
@@ -76,7 +136,7 @@ def get_band_info(reader: Any) -> List[BandInfo]:
             pols = getattr(reader, 'polarizations', None)
             if pols:
                 return [
-                    BandInfo(i, pol, f"Polarization {pol}")
+                    BandInfo(i, f"Band {i} ({pol})", f"Polarization {pol}", polarization=pol)
                     for i, pol in enumerate(pols)
                 ]
     except ImportError:
@@ -86,30 +146,27 @@ def get_band_info(reader: Any) -> List[BandInfo]:
     try:
         from grdl.IO.sar.sentinel1_slc import Sentinel1SLCReader
         if isinstance(reader, Sentinel1SLCReader):
-            # List all available polarizations so the combo shows them all
             all_pols = []
             try:
                 all_pols = reader.get_available_polarizations()
             except Exception:
                 pass
-            swath_info = reader.metadata.get('swath_info')
+            swath_info = reader.metadata.get('swath_info') if hasattr(reader.metadata, 'get') else getattr(reader.metadata, 'swath_info', None)
             swath = getattr(swath_info, 'swath', None) if swath_info else None
 
             if len(all_pols) > 1:
                 return [
                     BandInfo(
-                        i, pol,
-                        f"{swath} {pol}" if swath else f"Polarization {pol}",
+                        i,
+                        f"Band {i} ({pol})",
+                        f"{swath} {pol}".strip() if swath else f"Polarization {pol}",
+                        polarization=pol
                     )
                     for i, pol in enumerate(all_pols)
                 ]
-            # Single pol fallback
-            if swath_info:
-                pol = getattr(swath_info, 'polarization', None)
-                name = pol or "Complex"
-                desc = f"{swath} {pol}" if swath and pol else name
-                return [BandInfo(0, name, desc)]
-            return [BandInfo(0, "Complex", "SAR SLC")]
+            pol = getattr(reader.metadata, 'polarization', None) or "Complex"
+            desc = f"{swath} {pol}".strip() if swath else pol
+            return [BandInfo(0, f"Band 1 ({pol})", desc, polarization=pol)]
     except ImportError:
         pass
 
@@ -117,67 +174,21 @@ def get_band_info(reader: Any) -> List[BandInfo]:
     try:
         from grdl.IO.sar.sicd import SICDReader
         if isinstance(reader, SICDReader):
-            return [BandInfo(0, "Complex", "SAR complex data")]
-    except ImportError:
-        pass
-
-    # --- CPHD: single complex band ---
-    try:
-        from grdl.IO.sar.cphd import CPHDReader
-        if isinstance(reader, CPHDReader):
-            return [BandInfo(0, "Complex", "Compensated phase history")]
-    except ImportError:
-        pass
-
-    # --- CRSD: single complex band ---
-    try:
-        from grdl.IO.sar.crsd import CRSDReader
-        if isinstance(reader, CRSDReader):
-            return [BandInfo(0, "Complex", "Compensated received signal")]
-    except ImportError:
-        pass
-
-    # --- TerraSAR-X / TanDEM-X: all available polarizations ---
-    try:
-        from grdl.IO.sar.terrasar import TerraSARReader
-        if isinstance(reader, TerraSARReader):
-            # List all available polarizations so the combo shows them all
-            all_pols = []
-            try:
-                all_pols = reader.get_available_polarizations()
-            except Exception:
-                pass
-            if len(all_pols) > 1:
-                return [
-                    BandInfo(i, pol, f"Polarization {pol}")
-                    for i, pol in enumerate(all_pols)
-                ]
-            pol = getattr(reader, '_requested_polarization', None)
-            if pol:
-                return [BandInfo(0, pol, f"Polarization {pol}")]
-            return [BandInfo(0, "Complex", "SAR")]
-    except ImportError:
-        pass
-
-    # --- NISAR: polarizations per frequency ---
-    try:
-        from grdl.IO.sar.nisar import NISARReader
-        if isinstance(reader, NISARReader):
             all_pols = []
             try:
                 all_pols = reader.get_available_polarizations()
             except Exception:
                 pass
             freq = getattr(reader.metadata, 'frequency', None)
-            freq_label = f"Freq{freq}" if freq else ""
+            freq_label = f"Freq {freq}" if freq else ""
             if len(all_pols) > 1:
                 return [
-                    BandInfo(i, pol, f"{freq_label} {pol}".strip())
+                    BandInfo(i, f"Band {i} ({pol})", f"{freq_label} {pol}".strip(), polarization=pol)
                     for i, pol in enumerate(all_pols)
                 ]
             pol = getattr(reader.metadata, 'polarization', None) or "Complex"
             desc = f"{freq_label} {pol}".strip() if freq_label else pol
-            return [BandInfo(0, pol, desc)]
+            return [BandInfo(0, f"Band 1 ({pol})", desc, polarization=pol)]
     except ImportError:
         pass
 
@@ -185,7 +196,7 @@ def get_band_info(reader: Any) -> List[BandInfo]:
     try:
         from grdl.IO.sar.sidd import SIDDReader
         if isinstance(reader, SIDDReader):
-            return [BandInfo(0, "Detected", "SAR detected image")]
+            return [BandInfo(0, "Band 1 (Detected)", "SAR detected image")]
     except ImportError:
         pass
 
@@ -193,16 +204,18 @@ def get_band_info(reader: Any) -> List[BandInfo]:
     try:
         from grdl.IO.eo.sentinel2 import Sentinel2Reader
         if isinstance(reader, Sentinel2Reader):
-            band_id = reader.metadata.get('band_id')
-            wl = reader.metadata.get('wavelength_center')
+            band_id = reader.metadata.get('band_id') if hasattr(reader.metadata, 'get') else getattr(reader.metadata, 'band_id', None)
+            wl = reader.metadata.get('wavelength_center') if hasattr(reader.metadata, 'get') else getattr(reader.metadata, 'wavelength_center', None)
             if band_id:
                 desc = f"{wl:.0f} nm" if wl else ""
-                return [BandInfo(0, band_id, desc)]
-            # TCI or other non-spectral product — check filename
+                color_name = _wavelength_to_color_label(wl) if wl else ""
+                if color_name:
+                    desc = f"{color_name} ({desc})"
+                return [BandInfo(0, f"{band_id} ({wl:.0f} nm)" if wl else band_id, desc, wavelength=wl)]
             fname = reader.filepath.stem.upper()
             if "_TCI_" in fname:
-                return [BandInfo(0, "TCI", "True Color Image (RGB)")]
-            return [BandInfo(0, "Band 0", "Sentinel-2")]
+                return [BandInfo(0, "TCI (RGB)", "True Color Image (RGB)")]
+            return [BandInfo(0, "Band 1", "Sentinel-2")]
     except ImportError:
         pass
 
@@ -213,20 +226,15 @@ def get_band_info(reader: Any) -> List[BandInfo]:
 
 def _get_num_bands(reader: Any) -> int:
     """Get band count from a reader using available metadata."""
-    # Try metadata.bands
     meta = getattr(reader, 'metadata', None)
     if meta is not None:
         bands = meta.get('bands') if hasattr(meta, 'get') else getattr(meta, 'bands', None)
         if bands is not None and isinstance(bands, int) and bands > 0:
             return bands
 
-    # Try get_shape() — (rows, cols) or (rows, cols, bands)
     try:
         shape = reader.get_shape()
         if len(shape) == 3:
-            # Channels-first: (C, H, W) if shape[0] < shape[1] and shape[0] < shape[2]
-            # Channels-last: (H, W, C) otherwise
-            # grdl uses channels-last for get_shape but channels-first for read_chip
             return shape[2]
         return 1
     except Exception:

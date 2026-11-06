@@ -124,7 +124,7 @@ class TestOverviewMapLocator:
 class TestDualPaneComparative:
     """Tests for ELT-16 (#34), ELT-17 (#35), ELT-20 (#38)."""
 
-    def test_flicker_controller(self, qtbot):
+    def test_flicker_controller(self):
         viewer = DualGeoViewer()
         flicker = FlickerController(viewer, interval_ms=100)
         assert flicker.is_running is False

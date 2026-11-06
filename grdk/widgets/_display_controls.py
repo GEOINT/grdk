@@ -149,6 +149,10 @@ def build_display_controls(
         if 'gamma' in controls:
             s = replace(s, gamma=controls['gamma'].value())
 
+        if 'stretch_mode' in controls:
+            mode_data = controls['stretch_mode'].currentData()
+            s = replace(s, stretch_mode=mode_data)
+
         if 'remap' in controls:
             remap_name = controls['remap'].currentData()
             if remap_name and remap_name in _REMAP_FUNCTIONS:
@@ -196,6 +200,21 @@ def build_display_controls(
         layout.addLayout(row)
         controls['remap'] = remap_combo
         controls['remap_label'] = remap_label
+
+    # --- Contrast Stretch Mode ---
+    stretch_row = QHBoxLayout()
+    stretch_row.addWidget(QLabel("Stretch Mode:", group))
+    stretch_combo = QComboBox(group)
+    stretch_combo.addItem("Linear (Min / Max)", "minmax")
+    stretch_combo.addItem("Percentile Clip", "percentile")
+    stretch_combo.addItem("Standard Deviation (±2σ)", "stddev")
+    stretch_combo.addItem("Logarithmic", "log")
+    stretch_combo.addItem("Histogram Equalization", "equalize")
+    stretch_combo.addItem("Manual (Window / Level)", "manual")
+    stretch_combo.currentIndexChanged.connect(lambda _: _update())
+    stretch_row.addWidget(stretch_combo)
+    layout.addLayout(stretch_row)
+    controls['stretch_mode'] = stretch_combo
 
     # --- Window/Level ---
     if 'window' in visible:

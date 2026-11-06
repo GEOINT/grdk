@@ -1,32 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Polygon Drawing - Interactive polygon drawing state and rendering.
+Polygon Drawing & Vector Geometry Tools - Interactive point, line, and polygon drawing.
 
-Manages polygon drawing state for ImageCanvas, including vertex collection,
-rubber-band preview, and completed polygon rendering.
+Manages vector drawing state for ImageCanvas, including points, polylines,
+polygons, vertex collection, rubber-band preview, and completed geometry rendering.
 
 Dependencies
 ------------
-PyQt6
+PyQt6, numpy
 
 Author
 ------
-Claude Code (Anthropic)
+Claude Code / Steven Siebert
 
 License
 -------
 MIT License
-Copyright (c) 2024 geoint.org
-See LICENSE file for full text.
-
-Created
--------
-2026-06-23
-
-Modified
---------
-2026-06-23
+Copyright (c) 2026 geoint.org
 """
+
+from __future__ import annotations
 
 # Standard library
 from dataclasses import dataclass, field
@@ -36,8 +29,14 @@ from typing import Any, List, Optional, Tuple
 import numpy as np
 
 try:
-    from PyQt6.QtWidgets import QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsPolygonItem
-    from PyQt6.QtGui import QBrush, QColor, QPen, QPolygonF
+    from PyQt6.QtWidgets import (
+        QGraphicsEllipseItem,
+        QGraphicsLineItem,
+        QGraphicsPolygonItem,
+        QGraphicsPathItem,
+        QGraphicsItem,
+    )
+    from PyQt6.QtGui import QBrush, QColor, QPainterPath, QPen, QPolygonF
     from PyQt6.QtCore import QPointF, Qt
 
     _QT_AVAILABLE = True
@@ -49,39 +48,21 @@ if _QT_AVAILABLE:
 
     @dataclass
     class PolygonDrawingState:
-        """State for interactive polygon drawing on a canvas.
-
-        Attributes
-        ----------
-        active : bool
-            Whether drawing mode is currently enabled.
-        vertices : List[Tuple[float, float]]
-            Current polygon vertices in scene coordinates (col, row).
-        completed_polygons : List[np.ndarray]
-            Stored completed polygons as (N, 2) arrays in (row, col) format.
-        annotations : List[str]
-            Annotation labels for each completed polygon (parallel to completed_polygons).
-        vertex_items : List[QGraphicsEllipseItem]
-            Visual markers for vertices being drawn.
-        rubber_band_item : Optional[QGraphicsLineItem]
-            Preview line from last vertex to mouse cursor.
-        polygon_items : List[QGraphicsPolygonItem]
-            Rendered completed polygons.
-        deleted_stack : List[Tuple[np.ndarray, QGraphicsPolygonItem, Any, str]]
-            Stack of deleted polygons for redo (vertices, item, scene, annotation).
-        """
+        """State for interactive geometry drawing (points, lines, polygons)."""
 
         active: bool = False
+        mode: str = "polygon"  # "polygon", "point", "line"
         vertices: List[Tuple[float, float]] = field(default_factory=list)
         completed_polygons: List[np.ndarray] = field(default_factory=list)
         annotations: List[str] = field(default_factory=list)
+        geometry_types: List[str] = field(default_factory=list)  # "polygon", "point", "line"
         vertex_items: List[QGraphicsEllipseItem] = field(default_factory=list)
         rubber_band_item: Optional[QGraphicsLineItem] = None
-        polygon_items: List[QGraphicsPolygonItem] = field(default_factory=list)
-        deleted_stack: List[Tuple[np.ndarray, QGraphicsPolygonItem, Any, str]] = field(default_factory=list)
+        polygon_items: List[QGraphicsItem] = field(default_factory=list)
+        deleted_stack: List[Tuple[np.ndarray, QGraphicsItem, Any, str, str]] = field(default_factory=list)
 
         def clear_active_drawing(self) -> None:
-            """Clear the current in-progress polygon."""
+            """Clear the current in-progress geometry."""
             self.vertices.clear()
             for item in self.vertex_items:
                 scene = item.scene()
@@ -95,7 +76,7 @@ if _QT_AVAILABLE:
                 self.rubber_band_item = None
 
         def clear_all_polygons(self) -> None:
-            """Clear all completed polygons and their visual items."""
+            """Clear all completed geometries and their visual items."""
             self.completed_polygons.clear()
             for item in self.polygon_items:
                 scene = item.scene()
@@ -103,209 +84,161 @@ if _QT_AVAILABLE:
                     scene.removeItem(item)
             self.polygon_items.clear()
             self.annotations.clear()
-            self.deleted_stack.clear()  # Clear redo stack
-        
+            self.geometry_types.clear()
+            self.deleted_stack.clear()
+
         def remove_last_polygon(self) -> bool:
-            """Remove the most recently added polygon (for undo).
-            
-            Returns
-            -------
-            bool
-                True if a polygon was removed, False if there were no polygons.
-            """
+            """Remove the most recently added geometry (for undo)."""
             if not self.completed_polygons:
                 return False
-            
-            # Remove from storage and save for redo
+
             vertices = self.completed_polygons.pop()
             annotation = self.annotations.pop() if self.annotations else ""
-            
-            # Remove visual item and save for redo
+            geom_type = self.geometry_types.pop() if self.geometry_types else "polygon"
+
             if self.polygon_items:
                 item = self.polygon_items.pop()
-                # Get scene reference BEFORE removing item
                 scene = item.scene()
                 if scene is not None:
                     scene.removeItem(item)
-                # Store item, scene, and annotation for redo
-                self.deleted_stack.append((vertices, item, scene, annotation))
-            
+                self.deleted_stack.append((vertices, item, scene, annotation, geom_type))
+
             return True
-        
+
         def redo_last_deletion(self) -> bool:
-            """Restore the most recently deleted polygon (for redo).
-            
-            Returns
-            -------
-            bool
-                True if a polygon was restored, False if nothing to redo.
-            """
+            """Restore the most recently deleted geometry (for redo)."""
             if not self.deleted_stack:
                 return False
-            
-            # Pop from redo stack (handle both old and new tuple formats)
+
             deleted = self.deleted_stack.pop()
-            if len(deleted) == 4:
+            if len(deleted) == 5:
+                vertices, item, scene, annotation, geom_type = deleted
+            elif len(deleted) == 4:
                 vertices, item, scene, annotation = deleted
+                geom_type = "polygon"
             else:
-                # Legacy format without annotation
                 vertices, item, scene = deleted
                 annotation = ""
-            
-            # Restore to storage and visual items
+                geom_type = "polygon"
+
             self.completed_polygons.append(vertices)
             self.annotations.append(annotation)
+            self.geometry_types.append(geom_type)
             self.polygon_items.append(item)
-            
-            # Re-add to scene
-            if scene is not None:
+
+            if scene is not None and item.scene() is None:
                 scene.addItem(item)
-            
+
             return True
-        
+
         def remove_polygon_at_index(self, index: int) -> bool:
-            """Remove a specific polygon by index (for delete selected).
-            
-            Parameters
-            ----------
-            index : int
-                Index of the polygon to remove.
-            
-            Returns
-            -------
-            bool
-                True if polygon was removed, False if index was invalid.
-            """
+            """Remove a specific geometry by index."""
             if index < 0 or index >= len(self.completed_polygons):
                 return False
-            
-            # Remove from storage and save for redo
+
             vertices = self.completed_polygons.pop(index)
             annotation = self.annotations.pop(index) if index < len(self.annotations) else ""
-            
-            # Remove visual item and save for redo
+            geom_type = self.geometry_types.pop(index) if index < len(self.geometry_types) else "polygon"
+
             if index < len(self.polygon_items):
                 item = self.polygon_items.pop(index)
-                # Get scene reference BEFORE removing item
                 scene = item.scene()
                 if scene is not None:
                     scene.removeItem(item)
-                # Store item, scene, and annotation for redo
-                self.deleted_stack.append((vertices, item, scene, annotation))
-            
+                self.deleted_stack.append((vertices, item, scene, annotation, geom_type))
+
             return True
-        
+
         def set_polygons_selectable(self, selectable: bool) -> None:
-            """Enable or disable polygon selection.
-            
-            Parameters
-            ----------
-            selectable : bool
-                True to make polygons selectable, False to disable selection.
-            """
+            """Enable or disable geometry selection."""
             for item in self.polygon_items:
                 item.setFlag(
-                    QGraphicsPolygonItem.GraphicsItemFlag.ItemIsSelectable,
-                    selectable
+                    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
+                    selectable,
                 )
 
 
     def create_vertex_marker(scene: Any, x: float, y: float) -> QGraphicsEllipseItem:
-        """Create a visual marker for a polygon vertex.
-
-        Parameters
-        ----------
-        scene : QGraphicsScene
-            Scene to add the marker to.
-        x : float
-            X coordinate (column) in scene space.
-        y : float
-            Y coordinate (row) in scene space.
-
-        Returns
-        -------
-        QGraphicsEllipseItem
-            The created vertex marker.
-        """
+        """Create a visual marker for a vertex."""
         radius = 5.0
         item = QGraphicsEllipseItem(x - radius, y - radius, radius * 2, radius * 2)
-        item.setPen(QPen(QColor(255, 255, 0), 2))  # Yellow outline
-        item.setBrush(QBrush(QColor(255, 255, 0, 200)))  # Yellow fill
-        item.setZValue(1000)  # Above image
+        item.setPen(QPen(QColor(255, 255, 0), 2))
+        item.setBrush(QBrush(QColor(255, 255, 0, 200)))
+        item.setZValue(1000)
         scene.addItem(item)
         return item
 
 
     def create_rubber_band(scene: Any, x1: float, y1: float, x2: float, y2: float) -> QGraphicsLineItem:
-        """Create or update a rubber-band preview line.
-
-        Parameters
-        ----------
-        scene : QGraphicsScene
-            Scene to add the line to.
-        x1, y1 : float
-            Start point (last vertex).
-        x2, y2 : float
-            End point (current mouse position).
-
-        Returns
-        -------
-        QGraphicsLineItem
-            The rubber-band line.
-        """
+        """Create or update a rubber-band preview line."""
         item = QGraphicsLineItem(x1, y1, x2, y2)
-        pen = QPen(QColor(255, 255, 0, 255), 3, Qt.PenStyle.DashLine)  # Bright yellow, thicker, dashed
+        pen = QPen(QColor(255, 255, 0, 255), 3, Qt.PenStyle.DashLine)
         item.setPen(pen)
-        item.setZValue(1001)  # Above vertices
+        item.setZValue(1001)
         scene.addItem(item)
         return item
 
 
     def create_polygon_item(scene: Any, vertices: np.ndarray) -> QGraphicsPolygonItem:
-        """Create a visual polygon from vertices.
-
-        Parameters
-        ----------
-        scene : QGraphicsScene
-            Scene to add the polygon to.
-        vertices : np.ndarray
-            Polygon vertices, shape (N, 2) in (row, col) format.
-
-        Returns
-        -------
-        QGraphicsPolygonItem
-            The rendered polygon.
-        """
-        # Convert (row, col) to QPointF (col, row) for Qt
+        """Create a visual polygon from vertices."""
         points = [QPointF(float(v[1]), float(v[0])) for v in vertices]
         polygon = QPolygonF(points)
 
         item = QGraphicsPolygonItem(polygon)
-        item.setPen(QPen(QColor(255, 255, 0, 230), 2))  # Yellow stroke
-        item.setBrush(QBrush(QColor(255, 255, 0, 50)))  # Translucent fill
-        item.setZValue(998)  # Below vertices but above image
-        
-        # Polygons start as NOT selectable (enabled when exiting drawing mode)
-        item.setFlag(QGraphicsPolygonItem.GraphicsItemFlag.ItemIsSelectable, False)
-        
+        item.setPen(QPen(QColor(255, 255, 0, 230), 2))
+        item.setBrush(QBrush(QColor(255, 255, 0, 50)))
+        item.setZValue(998)
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+
+        scene.addItem(item)
+        return item
+
+
+    def create_point_item(scene: Any, point: Tuple[float, float]) -> QGraphicsEllipseItem:
+        """Create a visual point marker."""
+        radius = 6.0
+        row, col = point
+        item = QGraphicsEllipseItem(col - radius, row - radius, radius * 2, radius * 2)
+        item.setPen(QPen(QColor(0, 255, 255, 255), 2))  # Cyan stroke
+        item.setBrush(QBrush(QColor(0, 255, 255, 180)))
+        item.setZValue(999)
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        scene.addItem(item)
+        return item
+
+
+    def create_line_item(scene: Any, vertices: np.ndarray) -> QGraphicsPathItem:
+        """Create a visual polyline from vertices."""
+        path = QPainterPath()
+        if len(vertices) > 0:
+            path.moveTo(float(vertices[0, 1]), float(vertices[0, 0]))
+            for v in vertices[1:]:
+                path.lineTo(float(v[1]), float(v[0]))
+
+        item = QGraphicsPathItem(path)
+        item.setPen(QPen(QColor(0, 255, 128, 240), 2, Qt.PenStyle.SolidLine))  # Spring green
+        item.setZValue(998)
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         scene.addItem(item)
         return item
 
 
 else:
-    # No-op stubs when Qt is not available
     @dataclass
-    class PolygonDrawingState:  # type: ignore[no-redef]
+    class PolygonDrawingState:
         pass
 
-
-    def create_vertex_marker(*args: Any, **kwargs: Any) -> None:  # type: ignore[misc]
+    def create_vertex_marker(*args: Any, **kwargs: Any) -> None:
         pass
 
-
-    def create_rubber_band(*args: Any, **kwargs: Any) -> None:  # type: ignore[misc]
+    def create_rubber_band(*args: Any, **kwargs: Any) -> None:
         pass
 
+    def create_polygon_item(*args: Any, **kwargs: Any) -> None:
+        pass
 
-    def create_polygon_item(*args: Any, **kwargs: Any) -> None:  # type: ignore[misc]
+    def create_point_item(*args: Any, **kwargs: Any) -> None:
+        pass
+
+    def create_line_item(*args: Any, **kwargs: Any) -> None:
         pass

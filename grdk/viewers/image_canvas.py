@@ -60,6 +60,8 @@ if _QT_AVAILABLE:
         create_vertex_marker,
         create_rubber_band,
         create_polygon_item,
+        create_point_item,
+        create_line_item,
     )
 
 
@@ -286,6 +288,8 @@ class DisplaySettings:
     rgb_bands: Optional[Tuple[int, int, int]] = None
     invert_colormap: bool = False
     gamma: float = 1.0
+    stretch_mode: str = 'minmax'  # 'minmax', 'percentile', 'stddev', 'log', 'equalize', 'manual'
+    stddev_factor: float = 2.0
     remap_function: Optional[Callable] = field(default=None, repr=False)
 
 
@@ -403,39 +407,60 @@ def normalize_array(
         except Exception:
             pass  # Fall through to standard pipeline on error
 
-    # 3. Window/level
+    # 3. Dynamic Range & Contrast Stretch
     arr = arr.astype(np.float64)
 
-    if is_rgb:
-        for c in range(arr.shape[0]):
-            c_arr = arr[c]
+    def _stretch_channel(data: np.ndarray) -> np.ndarray:
+        finite_data = data[np.isfinite(data)]
+        if finite_data.size == 0:
+            return np.zeros_like(data)
+
+        mode = getattr(settings, 'stretch_mode', 'minmax').lower()
+        if mode == 'manual' and settings.window_min is not None and settings.window_max is not None:
+            vmin = float(settings.window_min)
+            vmax = float(settings.window_max)
+        elif mode == 'percentile' or (settings.percentile_low > 0 or settings.percentile_high < 100):
+            vmin = float(np.nanpercentile(finite_data, settings.percentile_low))
+            vmax = float(np.nanpercentile(finite_data, settings.percentile_high))
+        elif mode == 'stddev':
+            factor = getattr(settings, 'stddev_factor', 2.0)
+            mean = float(np.nanmean(finite_data))
+            std = float(np.nanstd(finite_data))
+            vmin = mean - factor * std
+            vmax = mean + factor * std
+        elif mode == 'log':
+            d_min = float(np.nanmin(finite_data))
+            shifted = np.maximum(data - d_min, 0.0)
+            log_data = np.log1p(shifted)
+            l_min = float(np.nanmin(log_data))
+            l_max = float(np.nanmax(log_data))
+            if l_max > l_min:
+                return (log_data - l_min) / (l_max - l_min)
+            return np.zeros_like(data)
+        elif mode == 'equalize':
+            # Histogram Equalization
+            counts, bin_edges = np.histogram(finite_data, bins=256)
+            cdf = counts.cumsum()
+            cdf = (cdf - cdf.min()) * 1.0 / (cdf.max() - cdf.min() + 1e-8)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
+            return np.interp(data, bin_centers, cdf, left=0.0, right=1.0)
+        else:  # 'minmax'
             if settings.window_min is not None and settings.window_max is not None:
                 vmin = float(settings.window_min)
                 vmax = float(settings.window_max)
-            elif settings.percentile_low > 0 or settings.percentile_high < 100:
-                vmin = float(np.nanpercentile(c_arr, settings.percentile_low))
-                vmax = float(np.nanpercentile(c_arr, settings.percentile_high))
             else:
-                vmin = float(np.nanmin(c_arr))
-                vmax = float(np.nanmax(c_arr))
-            if vmax > vmin:
-                arr[c] = (c_arr - vmin) / (vmax - vmin)
-            else:
-                arr[c] = np.zeros_like(c_arr)
-    else:
-        if settings.window_min is not None and settings.window_max is not None:
-            vmin = float(settings.window_min)
-            vmax = float(settings.window_max)
-        elif settings.percentile_low > 0 or settings.percentile_high < 100:
-            vmin = float(np.nanpercentile(arr, settings.percentile_low))
-            vmax = float(np.nanpercentile(arr, settings.percentile_high))
-        else:
-            vmin = float(np.nanmin(arr))
-            vmax = float(np.nanmax(arr))
+                vmin = float(np.nanmin(finite_data))
+                vmax = float(np.nanmax(finite_data))
+
         if vmax > vmin:
-            arr = (arr - vmin) / (vmax - vmin)
-        else:
-            arr = np.zeros_like(arr)
+            return np.clip((data - vmin) / (vmax - vmin), 0.0, 1.0)
+        return np.zeros_like(data)
+
+    if is_rgb:
+        for c in range(arr.shape[0]):
+            arr[c] = _stretch_channel(arr[c])
+    else:
+        arr = _stretch_channel(arr)
 
     # 4. Contrast and brightness
     if settings.contrast != 1.0 or settings.brightness != 0.0:
@@ -742,21 +767,16 @@ if _QT_AVAILABLE:
 
         # --- Polygon drawing mode ---
 
-        def enter_polygon_mode(self) -> None:
-            """Enter polygon drawing mode.
-
-            The canvas will capture mouse clicks to build a polygon.
-            Click to add vertices, double-click or press Enter to close.
-            Press Escape to cancel.
-            """
+        def enter_polygon_mode(self, mode: str = "polygon") -> None:
+            """Enter vector drawing mode ('polygon', 'point', or 'line')."""
             if self._polygon_state.active:
-                return
+                self.exit_polygon_mode()
             self._polygon_state.active = True
-            # Disable polygon selection while in drawing mode
+            self._polygon_state.mode = mode
             self._polygon_state.set_polygons_selectable(False)
             self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
             self.setDragMode(QGraphicsView.DragMode.NoDrag)
-            self.setMouseTracking(True)  # Ensure mouse tracking is on for rubber-band
+            self.setMouseTracking(True)
 
         def exit_polygon_mode(self) -> None:
             """Exit polygon drawing mode and return to normal interaction."""
@@ -836,6 +856,13 @@ if _QT_AVAILABLE:
                 scene_pos = self.mapToScene(event.pos())
                 x, y = scene_pos.x(), scene_pos.y()
                 
+                # Check if point mode
+                if getattr(self._polygon_state, 'mode', 'polygon') == 'point':
+                    self._polygon_state.vertices = [(x, y)]
+                    self._complete_geometry()
+                    event.accept()
+                    return
+
                 # Add vertex
                 self._polygon_state.vertices.append((x, y))
                 
@@ -1002,29 +1029,37 @@ if _QT_AVAILABLE:
         # --- Internal ---
 
         def _complete_polygon(self) -> None:
-            """Complete the current polygon and emit signal."""
-            if len(self._polygon_state.vertices) < 3:
-                # Need at least 3 vertices for a polygon
-                self._polygon_state.clear_active_drawing()
-                return
-            
-            # Convert (col, row) scene coords to (row, col) for storage
-            vertices = np.array([
-                (y, x) for x, y in self._polygon_state.vertices
-            ], dtype=np.float64)
-            
-            # Store the completed polygon with empty annotation
+            self._complete_geometry()
+
+        def _complete_geometry(self) -> None:
+            """Complete the current geometry (polygon, point, or line) and emit signal."""
+            mode = getattr(self._polygon_state, 'mode', 'polygon')
+            if mode == 'point':
+                if len(self._polygon_state.vertices) < 1:
+                    return
+                x, y = self._polygon_state.vertices[0]
+                vertices = np.array([[y, x]], dtype=np.float64)
+                item = create_point_item(self._scene, (y, x))
+            elif mode == 'line':
+                if len(self._polygon_state.vertices) < 2:
+                    self._polygon_state.clear_active_drawing()
+                    return
+                vertices = np.array([(y, x) for x, y in self._polygon_state.vertices], dtype=np.float64)
+                item = create_line_item(self._scene, vertices)
+            else:  # polygon
+                if len(self._polygon_state.vertices) < 3:
+                    self._polygon_state.clear_active_drawing()
+                    return
+                vertices = np.array([(y, x) for x, y in self._polygon_state.vertices], dtype=np.float64)
+                item = create_polygon_item(self._scene, vertices)
+
             self._polygon_state.completed_polygons.append(vertices)
             self._polygon_state.annotations.append("")
-            
-            # Render the polygon
-            item = create_polygon_item(self._scene, vertices)
+            if hasattr(self._polygon_state, 'geometry_types'):
+                self._polygon_state.geometry_types.append(mode)
             self._polygon_state.polygon_items.append(item)
-            
-            # Emit signal
+
             self.polygon_completed.emit(vertices)
-            
-            # Clear active drawing
             self._polygon_state.clear_active_drawing()
 
         def _refresh_display(self) -> None:

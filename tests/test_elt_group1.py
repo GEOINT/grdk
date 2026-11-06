@@ -123,7 +123,7 @@ class TestCloseImageAction:
 class TestAsyncImageLoader:
     """Tests for ELT-01 (#19): Async loading worker."""
 
-    def test_worker_instantiation_and_signals(self, qtbot):
+    def test_worker_instantiation_and_signals(self):
         from grdk.viewers.main_window import ImageLoaderWorker
 
         worker = ImageLoaderWorker("dummy_nonexistent_path.tif", pane=0)
