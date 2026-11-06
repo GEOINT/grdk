@@ -115,6 +115,11 @@ if _QT_AVAILABLE:
 
         # --- Public API ---
 
+        def clear(self) -> None:
+            """Clear all tiles, caches, and base image items."""
+            self._clear_tiles()
+            super().clear()
+
         def set_reader(self, reader: Any) -> None:
             """Set an ImageReader for tiled lazy rendering.
 

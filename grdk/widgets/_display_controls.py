@@ -159,9 +159,20 @@ def build_display_controls(
         if 'colormap' in controls:
             s = replace(s, colormap=controls['colormap'].currentData())
 
-        if 'band' in controls:
+        if 'invert' in controls:
+            s = replace(s, invert_colormap=controls['invert'].isChecked())
+
+        if controls.get('display_mode') and controls['display_mode'].currentText() == "RGB Composite":
+            r_idx = controls['rgb_r'].currentData()
+            g_idx = controls['rgb_g'].currentData()
+            b_idx = controls['rgb_b'].currentData()
+            if r_idx is not None and g_idx is not None and b_idx is not None and r_idx >= 0 and g_idx >= 0 and b_idx >= 0:
+                s = replace(s, rgb_bands=(r_idx, g_idx, b_idx), band_index=None)
+            else:
+                s = replace(s, rgb_bands=None)
+        elif 'band' in controls:
             val = controls['band'].currentData()
-            s = replace(s, band_index=val if val is not None and val >= 0 else None)
+            s = replace(s, band_index=val if val is not None and val >= 0 else None, rgb_bands=None)
 
         canvas.set_display_settings(s)
 
@@ -338,18 +349,123 @@ def build_display_controls(
         layout.addWidget(colorbar_cb)
         controls['colorbar'] = colorbar_cb
 
-    # --- Band selector ---
-    if 'band' in visible:
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Band:", group))
+    # --- Display Inversion ---
+    invert_row = QHBoxLayout()
+    invert_cb = QCheckBox("Invert Display", group)
+    invert_cb.setChecked(getattr(canvas.display_settings, 'invert_colormap', False))
+    invert_cb.toggled.connect(lambda _: _update())
+    invert_row.addWidget(invert_cb)
+    layout.addLayout(invert_row)
+    controls['invert'] = invert_cb
 
+    # --- Band selector & RGB Guns ---
+    if 'band' in visible:
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Mode:", group))
+        mode_combo = QComboBox(group)
+        mode_combo.addItems(["Single Band", "RGB Composite"])
+        mode_row.addWidget(mode_combo)
+        layout.addLayout(mode_row)
+        controls['display_mode'] = mode_combo
+
+        # Single band widget
+        single_row = QHBoxLayout()
+        single_row.addWidget(QLabel("Band:", group))
         band_combo = QComboBox(group)
         band_combo.addItem("Auto", -1)
         band_combo.currentIndexChanged.connect(lambda _: _update())
-        row.addWidget(band_combo)
-
-        layout.addLayout(row)
+        single_row.addWidget(band_combo)
+        layout.addLayout(single_row)
         controls['band'] = band_combo
+        controls['single_row'] = single_row
+
+        # RGB gun widgets
+        rgb_widget = QWidget(group)
+        rgb_layout = QVBoxLayout(rgb_widget)
+        rgb_layout.setContentsMargins(0, 0, 0, 0)
+
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Preset:", rgb_widget))
+        preset_combo = QComboBox(rgb_widget)
+        preset_combo.addItems([
+            "Custom",
+            "Natural Color (RGB)",
+            "Color Infrared (CIR)",
+            "SWIR Agriculture",
+            "Geology / Mineral",
+            "Urban / Atmospheric",
+        ])
+        preset_row.addWidget(preset_combo)
+        rgb_layout.addLayout(preset_row)
+        controls['rgb_preset'] = preset_combo
+
+        # Red Gun
+        r_row = QHBoxLayout()
+        r_row.addWidget(QLabel("Red Gun:", rgb_widget))
+        r_combo = QComboBox(rgb_widget)
+        r_combo.currentIndexChanged.connect(lambda _: _update())
+        r_row.addWidget(r_combo)
+        rgb_layout.addLayout(r_row)
+        controls['rgb_r'] = r_combo
+
+        # Green Gun
+        g_row = QHBoxLayout()
+        g_row.addWidget(QLabel("Green Gun:", rgb_widget))
+        g_combo = QComboBox(rgb_widget)
+        g_combo.currentIndexChanged.connect(lambda _: _update())
+        g_row.addWidget(g_combo)
+        rgb_layout.addLayout(g_row)
+        controls['rgb_g'] = g_combo
+
+        # Blue Gun
+        b_row = QHBoxLayout()
+        b_row.addWidget(QLabel("Blue Gun:", rgb_widget))
+        b_combo = QComboBox(rgb_widget)
+        b_combo.currentIndexChanged.connect(lambda _: _update())
+        b_row.addWidget(b_combo)
+        rgb_layout.addLayout(b_row)
+        controls['rgb_b'] = b_combo
+
+        layout.addWidget(rgb_widget)
+        controls['rgb_widget'] = rgb_widget
+        rgb_widget.hide()
+
+        def _on_mode_changed(idx: int):
+            is_rgb = (idx == 1)
+            band_combo.setVisible(not is_rgb)
+            single_row.itemAt(0).widget().setVisible(not is_rgb)
+            rgb_widget.setVisible(is_rgb)
+            _update()
+
+        mode_combo.currentIndexChanged.connect(_on_mode_changed)
+
+        def _apply_preset(name: str):
+            count = r_combo.count()
+            if count < 3:
+                return
+            if name == "Natural Color (RGB)":
+                r_combo.setCurrentIndex(min(0, count-1))
+                g_combo.setCurrentIndex(min(1, count-1))
+                b_combo.setCurrentIndex(min(2, count-1))
+            elif name == "Color Infrared (CIR)":
+                r_combo.setCurrentIndex(min(3 if count > 3 else 0, count-1))
+                g_combo.setCurrentIndex(min(0, count-1))
+                b_combo.setCurrentIndex(min(1, count-1))
+            elif name == "SWIR Agriculture":
+                r_combo.setCurrentIndex(min(5 if count > 5 else 0, count-1))
+                g_combo.setCurrentIndex(min(3 if count > 3 else 1, count-1))
+                b_combo.setCurrentIndex(min(2, count-1))
+            elif name == "Geology / Mineral":
+                r_combo.setCurrentIndex(min(6 if count > 6 else 0, count-1))
+                g_combo.setCurrentIndex(min(4 if count > 4 else 1, count-1))
+                b_combo.setCurrentIndex(min(1, count-1))
+            elif name == "Urban / Atmospheric":
+                r_combo.setCurrentIndex(min(6 if count > 6 else 0, count-1))
+                g_combo.setCurrentIndex(min(3 if count > 3 else 1, count-1))
+                b_combo.setCurrentIndex(min(0, count-1))
+            _update()
+
+        preset_combo.currentTextChanged.connect(_apply_preset)
 
     # Attach a method to update the band combo when band info changes.
     # Callers can use:  group.update_band_info(list_of_BandInfo)
@@ -367,6 +483,32 @@ def build_display_controls(
             if info.description:
                 label = f"{info.name} \u2014 {info.description}"
             combo.addItem(label, info.index)
+
+        # Update RGB gun combos if present
+        for gun_key in ['rgb_r', 'rgb_g', 'rgb_b']:
+            gun_combo = controls.get(gun_key)
+            if gun_combo is not None:
+                gun_combo.blockSignals(True)
+                gun_combo.clear()
+                for info in band_info_list:
+                    lbl = info.name
+                    if info.description:
+                        lbl = f"{info.name} - {info.description}"
+                    gun_combo.addItem(lbl, info.index)
+                gun_combo.blockSignals(False)
+
+        # Default assignments for RGB guns
+        if len(band_info_list) >= 3:
+            if controls.get('rgb_r') and controls['rgb_r'].count() >= 3:
+                controls['rgb_r'].blockSignals(True)
+                controls['rgb_g'].blockSignals(True)
+                controls['rgb_b'].blockSignals(True)
+                controls['rgb_r'].setCurrentIndex(0)
+                controls['rgb_g'].setCurrentIndex(1)
+                controls['rgb_b'].setCurrentIndex(2)
+                controls['rgb_r'].blockSignals(False)
+                controls['rgb_g'].blockSignals(False)
+                controls['rgb_b'].blockSignals(False)
         # Select the item matching the canvas's current band_index
         if current_band is not None:
             for idx in range(combo.count()):

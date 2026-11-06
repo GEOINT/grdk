@@ -37,7 +37,7 @@ Modified
 # Standard library
 import logging
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Tuple
 
 _log = logging.getLogger("grdk.image_canvas")
 
@@ -115,11 +115,98 @@ def _make_hot_lut() -> np.ndarray:
     lut = np.zeros((256, 3), dtype=np.uint8)
     for i in range(256):
         t = i / 255.0
-        # Red ramps first, then green, then blue
         r = min(1.0, t * 2.5)
         g = max(0.0, min(1.0, (t - 0.4) * 2.5))
         b = max(0.0, min(1.0, (t - 0.8) * 5.0))
         lut[i] = [int(r * 255), int(g * 255), int(b * 255)]
+    return lut
+
+
+def _make_jet_lut() -> np.ndarray:
+    """Generate jet colormap LUT (256 entries)."""
+    lut = np.zeros((256, 3), dtype=np.uint8)
+    for i in range(256):
+        t = i / 255.0
+        r = np.clip(1.5 - abs(4.0 * t - 3.0), 0.0, 1.0)
+        g = np.clip(1.5 - abs(4.0 * t - 2.0), 0.0, 1.0)
+        b = np.clip(1.5 - abs(4.0 * t - 1.0), 0.0, 1.0)
+        lut[i] = [int(r * 255), int(g * 255), int(b * 255)]
+    return lut
+
+
+def _make_turbo_lut() -> np.ndarray:
+    """Generate turbo colormap LUT (256 entries)."""
+    points = np.array([
+        [48, 18, 59], [70, 134, 251], [27, 229, 181],
+        [164, 252, 60], [251, 185, 56], [228, 75, 41], [122, 4, 3],
+    ], dtype=np.float64)
+    indices = np.linspace(0, len(points) - 1, 256)
+    lut = np.zeros((256, 3), dtype=np.uint8)
+    for c in range(3):
+        lut[:, c] = np.interp(indices, np.arange(len(points)), points[:, c])
+    return lut
+
+
+def _make_magma_lut() -> np.ndarray:
+    """Generate magma colormap LUT (256 entries)."""
+    points = np.array([
+        [0, 0, 4], [30, 15, 65], [81, 18, 124], [130, 37, 129],
+        [182, 54, 121], [230, 81, 100], [251, 136, 97], [254, 195, 139],
+        [252, 253, 191],
+    ], dtype=np.float64)
+    indices = np.linspace(0, len(points) - 1, 256)
+    lut = np.zeros((256, 3), dtype=np.uint8)
+    for c in range(3):
+        lut[:, c] = np.interp(indices, np.arange(len(points)), points[:, c])
+    return lut
+
+
+def _make_bone_lut() -> np.ndarray:
+    """Generate bone colormap LUT (256 entries)."""
+    points = np.array([
+        [0, 0, 0], [60, 60, 80], [120, 140, 160], [200, 220, 230], [255, 255, 255],
+    ], dtype=np.float64)
+    indices = np.linspace(0, len(points) - 1, 256)
+    lut = np.zeros((256, 3), dtype=np.uint8)
+    for c in range(3):
+        lut[:, c] = np.interp(indices, np.arange(len(points)), points[:, c])
+    return lut
+
+
+def _make_coolwarm_lut() -> np.ndarray:
+    """Generate coolwarm colormap LUT (256 entries)."""
+    points = np.array([
+        [59, 76, 192], [140, 180, 240], [220, 220, 220], [245, 130, 100], [180, 4, 38],
+    ], dtype=np.float64)
+    indices = np.linspace(0, len(points) - 1, 256)
+    lut = np.zeros((256, 3), dtype=np.uint8)
+    for c in range(3):
+        lut[:, c] = np.interp(indices, np.arange(len(points)), points[:, c])
+    return lut
+
+
+def _make_seismic_lut() -> np.ndarray:
+    """Generate seismic colormap LUT (256 entries)."""
+    points = np.array([
+        [0, 0, 128], [50, 100, 255], [255, 255, 255], [255, 80, 50], [128, 0, 0],
+    ], dtype=np.float64)
+    indices = np.linspace(0, len(points) - 1, 256)
+    lut = np.zeros((256, 3), dtype=np.uint8)
+    for c in range(3):
+        lut[:, c] = np.interp(indices, np.arange(len(points)), points[:, c])
+    return lut
+
+
+def _make_rainbow_lut() -> np.ndarray:
+    """Generate rainbow colormap LUT (256 entries)."""
+    points = np.array([
+        [148, 0, 211], [75, 0, 130], [0, 0, 255], [0, 255, 0],
+        [255, 255, 0], [255, 127, 0], [255, 0, 0],
+    ], dtype=np.float64)
+    indices = np.linspace(0, len(points) - 1, 256)
+    lut = np.zeros((256, 3), dtype=np.uint8)
+    for c in range(3):
+        lut[:, c] = np.interp(indices, np.arange(len(points)), points[:, c])
     return lut
 
 
@@ -136,11 +223,21 @@ def _get_colormaps() -> dict:
             'inferno': _make_inferno_lut(),
             'plasma': _make_plasma_lut(),
             'hot': _make_hot_lut(),
+            'jet': _make_jet_lut(),
+            'turbo': _make_turbo_lut(),
+            'magma': _make_magma_lut(),
+            'bone': _make_bone_lut(),
+            'coolwarm': _make_coolwarm_lut(),
+            'seismic': _make_seismic_lut(),
+            'rainbow': _make_rainbow_lut(),
         }
     return _COLORMAPS
 
 
-AVAILABLE_COLORMAPS = ('grayscale', 'viridis', 'inferno', 'plasma', 'hot')
+AVAILABLE_COLORMAPS = (
+    'grayscale', 'viridis', 'inferno', 'plasma', 'hot',
+    'jet', 'turbo', 'magma', 'bone', 'coolwarm', 'seismic', 'rainbow',
+)
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +283,8 @@ class DisplaySettings:
     contrast: float = 1.0
     colormap: str = 'grayscale'
     band_index: Optional[int] = None
+    rgb_bands: Optional[Tuple[int, int, int]] = None
+    invert_colormap: bool = False
     gamma: float = 1.0
     remap_function: Optional[Callable] = field(default=None, repr=False)
 
@@ -245,7 +344,10 @@ def normalize_array(
         if settings.gamma != 1.0:
             out = np.clip(out, 0.0, 1.0)
             out = np.power(out, 1.0 / settings.gamma)
-        return np.clip(out * 255.0, 0, 255).astype(np.uint8)
+        res = np.clip(out * 255.0, 0, 255).astype(np.uint8)
+        if settings.invert_colormap:
+            res = 255 - res
+        return res
 
     # 1. Complex → magnitude
     if np.iscomplexobj(arr):
@@ -254,15 +356,20 @@ def normalize_array(
     # 2. Band selection — channels-first convention: (C, H, W)
     if arr.ndim == 3:
         num_bands = arr.shape[0]
-        if settings.band_index is not None:
+        if settings.rgb_bands is not None and num_bands >= 2:
+            r = min(max(0, settings.rgb_bands[0]), num_bands - 1)
+            g = min(max(0, settings.rgb_bands[1]), num_bands - 1)
+            b = min(max(0, settings.rgb_bands[2]), num_bands - 1)
+            arr = arr[[r, g, b]]
+        elif settings.band_index is not None:
             idx = min(settings.band_index, num_bands - 1)
-            arr = arr[idx]  # (H, W)
+            arr = arr[idx]
         elif num_bands == 3:
-            pass  # Keep as (3, H, W) → RGB
+            pass
         elif num_bands >= 3:
-            arr = arr[:3]  # First 3 bands as RGB
+            arr = arr[:3]
         else:
-            arr = arr[0]  # Single band → (H, W)
+            arr = arr[0]
 
     is_rgb = arr.ndim == 3
 
@@ -299,21 +406,36 @@ def normalize_array(
     # 3. Window/level
     arr = arr.astype(np.float64)
 
-    if settings.window_min is not None and settings.window_max is not None:
-        vmin = float(settings.window_min)
-        vmax = float(settings.window_max)
+    if is_rgb:
+        for c in range(arr.shape[0]):
+            c_arr = arr[c]
+            if settings.window_min is not None and settings.window_max is not None:
+                vmin = float(settings.window_min)
+                vmax = float(settings.window_max)
+            elif settings.percentile_low > 0 or settings.percentile_high < 100:
+                vmin = float(np.nanpercentile(c_arr, settings.percentile_low))
+                vmax = float(np.nanpercentile(c_arr, settings.percentile_high))
+            else:
+                vmin = float(np.nanmin(c_arr))
+                vmax = float(np.nanmax(c_arr))
+            if vmax > vmin:
+                arr[c] = (c_arr - vmin) / (vmax - vmin)
+            else:
+                arr[c] = np.zeros_like(c_arr)
     else:
-        if settings.percentile_low > 0 or settings.percentile_high < 100:
+        if settings.window_min is not None and settings.window_max is not None:
+            vmin = float(settings.window_min)
+            vmax = float(settings.window_max)
+        elif settings.percentile_low > 0 or settings.percentile_high < 100:
             vmin = float(np.nanpercentile(arr, settings.percentile_low))
             vmax = float(np.nanpercentile(arr, settings.percentile_high))
         else:
             vmin = float(np.nanmin(arr))
             vmax = float(np.nanmax(arr))
-
-    if vmax > vmin:
-        arr = (arr - vmin) / (vmax - vmin)
-    else:
-        arr = np.zeros_like(arr)
+        if vmax > vmin:
+            arr = (arr - vmin) / (vmax - vmin)
+        else:
+            arr = np.zeros_like(arr)
 
     # 4. Contrast and brightness
     if settings.contrast != 1.0 or settings.brightness != 0.0:
@@ -333,6 +455,9 @@ def normalize_array(
         lut = colormaps.get(settings.colormap)
         if lut is not None:
             arr = lut[arr]  # (H, W) uint8 → (H, W, 3) uint8
+
+    if settings.invert_colormap:
+        arr = 255 - arr
 
     return arr
 
@@ -469,6 +594,12 @@ if _QT_AVAILABLE:
             self._polygon_state = PolygonDrawingState()
             self._polygon_completing = False  # Flag to prevent double-click from adding vertex
 
+        def clear(self) -> None:
+            """Clear the source array and reset display."""
+            self._source = None
+            if hasattr(self, "_pixmap_item") and self._pixmap_item is not None:
+                self._pixmap_item.setPixmap(QPixmap())
+
         def set_array(self, arr: np.ndarray) -> None:
             """Set the source image array and refresh display.
 
@@ -509,6 +640,53 @@ if _QT_AVAILABLE:
         def source_array(self) -> Optional[np.ndarray]:
             """The source image array, or None."""
             return self._source
+
+        @property
+        def rotation_angle(self) -> float:
+            """Current rotation angle in degrees."""
+            return getattr(self, "_rotation_angle", 0.0)
+
+        @property
+        def is_flipped_h(self) -> bool:
+            """Whether canvas is horizontally flipped."""
+            return getattr(self, "_is_flipped_h", False)
+
+        @property
+        def is_flipped_v(self) -> bool:
+            """Whether canvas is vertically flipped."""
+            return getattr(self, "_is_flipped_v", False)
+
+        def rotate_by(self, angle: float) -> None:
+            """Rotate canvas view by relative angle in degrees."""
+            self._rotation_angle = (self.rotation_angle + angle) % 360.0
+            self.rotate(angle)
+
+        def set_rotation(self, angle: float) -> None:
+            """Set absolute rotation angle in degrees."""
+            diff = (angle - self.rotation_angle) % 360.0
+            self.rotate_by(diff)
+
+        def flip_horizontal(self) -> None:
+            """Flip view horizontally."""
+            self._is_flipped_h = not self.is_flipped_h
+            self.scale(-1.0, 1.0)
+
+        def flip_vertical(self) -> None:
+            """Flip view vertically."""
+            self._is_flipped_v = not self.is_flipped_v
+            self.scale(1.0, -1.0)
+
+        def reset_orientation(self) -> None:
+            """Reset rotation and flips back to standard view."""
+            if self.is_flipped_h:
+                self.scale(-1.0, 1.0)
+            if self.is_flipped_v:
+                self.scale(1.0, -1.0)
+            if self.rotation_angle != 0.0:
+                self.rotate(-self.rotation_angle)
+            self._rotation_angle = 0.0
+            self._is_flipped_h = False
+            self._is_flipped_v = False
 
         def fit_in_view(self) -> None:
             """Zoom to fit the entire image in the viewport."""

@@ -45,6 +45,7 @@ try:
         QDialogButtonBox,
         QDockWidget,
         QFileDialog,
+        QProgressDialog,
         QGroupBox,
         QHeaderView,
         QInputDialog,
@@ -125,6 +126,53 @@ if _QT_AVAILABLE:
     # -----------------------------------------------------------------------
     # Background worker: Pauli / H-Alpha decomposition
     # -----------------------------------------------------------------------
+
+    class ImageLoaderWorker(QThread):
+        """Asynchronous background worker for opening image readers.
+        
+        Prevents UI thread freezing / white screen on large files or network shares.
+        """
+        progress = Signal(int, str)
+        loaded = Signal(object, object, str, int)
+        failed = Signal(str, str)
+
+        def __init__(self, filepath: str, pane: int = 0, parent: Optional[Any] = None) -> None:
+            super().__init__(parent)
+            self.filepath = filepath
+            self.pane = pane
+            self._is_cancelled = False
+
+        def cancel(self) -> None:
+            self._is_cancelled = True
+
+        def run(self) -> None:
+            try:
+                self.progress.emit(15, f"Opening reader for {self.filepath}...")
+                if self._is_cancelled:
+                    return
+
+                from grdl.IO import open_any
+                from grdk.viewers.geo_viewer import create_geolocation
+
+                reader = open_any(self.filepath)
+                if self._is_cancelled:
+                    return
+
+                self.progress.emit(65, "Resolving georeferencing model...")
+                geo = None
+                try:
+                    geo = create_geolocation(reader)
+                except Exception as e:
+                    _log.debug("Geolocation resolution deferred: %s", e)
+
+                if self._is_cancelled:
+                    return
+
+                self.progress.emit(100, "Done")
+                self.loaded.emit(reader, geo, self.filepath, self.pane)
+            except Exception as e:
+                _log.error("ImageLoaderWorker failed for %s: %s", self.filepath, e, exc_info=True)
+                self.failed.emit(self.filepath, str(e))
 
     class _PauliDecompWorker(QThread):
         """Background thread for Pauli / H-Alpha polarimetric decomposition.
@@ -302,6 +350,74 @@ if _QT_AVAILABLE:
             self.statusBar().showMessage("Ready")
 
         # --- Public API ---
+
+        def open_file_async(self, filepath: str, pane: int = 0) -> None:
+            """Open an image asynchronously in the background with progress reporting."""
+            self.statusBar().showMessage(f"Loading {filepath}...")
+            self._loader_dialog = QProgressDialog(f"Loading {filepath}...", "Cancel", 0, 100, self)
+            self._loader_dialog.setWindowTitle("Opening Image")
+            self._loader_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+            self._loader_dialog.setAutoClose(True)
+            self._loader_dialog.setValue(10)
+
+            worker = ImageLoaderWorker(filepath, pane=pane, parent=self)
+            self._loader_worker = worker
+
+            worker.progress.connect(lambda pct, msg: (self._loader_dialog.setValue(pct), self._loader_dialog.setLabelText(msg), self.statusBar().showMessage(msg)))
+            self._loader_dialog.canceled.connect(worker.cancel)
+
+            def on_loaded(reader, geo, fpath, p):
+                self._viewer.open_reader(reader, geolocation=geo, pane=p)
+                self.setWindowTitle(f"GRDK Viewer — {fpath}")
+                self._ortho_results.pop(p, None)
+                self._rgb_result = None
+                self._decomp_state[p] = None
+                self._update_metadata_table()
+                self._update_remap_state()
+                self._sync_display_controls(p)
+                self._update_colorbar_state(p)
+                self._update_tools_state()
+                self._update_pane_pol_names(p)
+                self._configure_sentinel1(fpath, p)
+                self.statusBar().showMessage(f"Opened: {fpath}")
+
+            def on_failed(fpath, err):
+                self.statusBar().showMessage(f"Failed to open {fpath}")
+                QMessageBox.critical(self, "Open Image Error", f"Failed to open {fpath}:\n{err}")
+
+            worker.loaded.connect(on_loaded)
+            worker.failed.connect(on_failed)
+            worker.start()
+
+        def close_image(self, pane: int = 0) -> None:
+            """Close the image in the specified pane and update UI."""
+            self._viewer.close_image(pane=pane)
+            self._ortho_results.pop(pane, None)
+            self._rgb_result = None
+            self._decomp_state[pane] = None
+            self._update_metadata_table()
+            self._update_remap_state()
+            self._sync_display_controls(pane)
+            self._update_colorbar_state(pane)
+            self._update_tools_state()
+            self.setWindowTitle("GRDK Viewer")
+            self.statusBar().showMessage(f"Pane {pane} image closed")
+
+        def close_all_images(self) -> None:
+            """Close images in all panes and reset viewer."""
+            self._viewer.close_all_images()
+            self._ortho_results.clear()
+            self._rgb_result = None
+            self._decomp_state = {0: None, 1: None}
+            self._update_metadata_table()
+            self._update_remap_state()
+            self._sync_display_controls(0)
+            self._sync_display_controls(1)
+            self._update_colorbar_state(0)
+            self._update_colorbar_state(1)
+            self._update_tools_state()
+            self.setWindowTitle("GRDK Viewer")
+            self.statusBar().showMessage("All images closed")
 
         def open_file(self, filepath: str, pane: int = 0) -> None:
             """Open an image file.
@@ -3258,3 +3374,5 @@ else:
         _build_arg_parser().parse_args()
         print("Error: PyQt6 is required. Install with: pip install PyQt6")
         sys.exit(1)
+
+ImageLoaderWorker = ImageLoaderWorker if '_QT_AVAILABLE' in dir() and _QT_AVAILABLE else None

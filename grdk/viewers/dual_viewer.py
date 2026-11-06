@@ -53,7 +53,7 @@ try:
         QVBoxLayout,
         QWidget,
     )
-    from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal as Signal
+    from PyQt6.QtCore import QEvent, QObject, QTimer, Qt, pyqtSignal as Signal
 
     _QT_AVAILABLE = True
 except ImportError:
@@ -763,6 +763,25 @@ if _QT_AVAILABLE:
             viewer.open_file(filepath)
             self._update_after_load(pane)
 
+        def open_array(self, arr: np.ndarray, pane: int = 0) -> None:
+            """Display an in-memory array in the specified pane."""
+            viewer = self._left_viewer if pane == 0 else self._right_viewer
+            viewer.open_array(arr)
+            self._update_after_load(pane)
+
+        def close_image(self, pane: int = 0) -> None:
+            """Close image in the specified pane."""
+            viewer = self._left_viewer if pane == 0 else self._right_viewer
+            viewer.close_image()
+            self._update_after_load(pane)
+
+        def close_all_images(self) -> None:
+            """Close images in both panes."""
+            self._left_viewer.close_image()
+            self._right_viewer.close_image()
+            self._update_after_load(0)
+            self._update_after_load(1)
+
         def open_reader(
             self,
             reader: Any,
@@ -1045,6 +1064,78 @@ if _QT_AVAILABLE:
                     self._left_viewer.setStyleSheet(self._INACTIVE_BORDER)
                     self._right_viewer.setStyleSheet(self._ACTIVE_BORDER)
             self.active_pane_changed.emit(pane)
+
+        @property
+        def is_swipe_mode(self) -> bool:
+            return getattr(self, "_is_swipe_mode", False)
+
+        @property
+        def swipe_position(self) -> float:
+            return getattr(self, "_swipe_position", 0.5)
+
+        def set_swipe_mode(self, enabled: bool) -> None:
+            self._is_swipe_mode = enabled
+
+        def set_swipe_position(self, pos: float) -> None:
+            self._swipe_position = float(np.clip(pos, 0.0, 1.0))
+
+        @property
+        def is_cursor_sync(self) -> bool:
+            return getattr(self, "_is_cursor_sync", False)
+
+        def set_cursor_sync(self, enabled: bool) -> None:
+            self._is_cursor_sync = enabled
+
+        def _on_pane_cursor_hover(self, pane: int, row: int, col: int) -> None:
+            if not self.is_cursor_sync:
+                return
+            other_viewer = self._right_viewer if pane == 0 else self._left_viewer
+            this_geo = self._left_viewer.geolocation if pane == 0 else self._right_viewer.geolocation
+            other_geo = self._right_viewer.geolocation if pane == 0 else self._left_viewer.geolocation
+            if this_geo is not None and other_geo is not None:
+                try:
+                    lat, lon = this_geo.image_to_latlon(row, col)
+                    orow, ocol = other_geo.latlon_to_image(lat, lon)
+                except Exception:
+                    pass
+
+
+    class FlickerController(QObject):
+        """Automated dual-pane flicker comparator for change detection."""
+
+        def __init__(self, dual_viewer: Any, interval_ms: int = 500) -> None:
+            super().__init__(dual_viewer)
+            self._viewer = dual_viewer
+            self._interval_ms = interval_ms
+            self._timer = QTimer(self)
+            self._timer.setInterval(interval_ms)
+            self._timer.timeout.connect(self.toggle_state)
+            self._active_flicker_pane: int = 0
+
+        @property
+        def is_running(self) -> bool:
+            return self._timer.isActive()
+
+        def start(self, interval_ms: Optional[int] = None) -> None:
+            if interval_ms:
+                self._interval_ms = interval_ms
+                self._timer.setInterval(interval_ms)
+            self._timer.start()
+
+        def stop(self) -> None:
+            self._timer.stop()
+            if hasattr(self._viewer, "_left_viewer") and hasattr(self._viewer, "_right_viewer"):
+                self._viewer._left_viewer.setVisible(True)
+                if self._viewer._mode == "dual":
+                    self._viewer._right_viewer.setVisible(True)
+
+        def toggle_state(self) -> None:
+            self._active_flicker_pane = 1 - self._active_flicker_pane
+            if hasattr(self._viewer, "_left_viewer") and hasattr(self._viewer, "_right_viewer"):
+                is_left = (self._active_flicker_pane == 0)
+                self._viewer._left_viewer.setVisible(is_left)
+                self._viewer._right_viewer.setVisible(not is_left)
+
 
 else:
 

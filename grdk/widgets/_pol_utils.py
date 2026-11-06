@@ -343,3 +343,51 @@ def _native_dims(stack: ImageStack) -> Tuple[Optional[int], Optional[int]]:
         if rows and cols:
             return int(rows), int(cols)
     return None, None
+
+
+# ---------------------------------------------------------------------------
+# Polarimetric Decompositions
+# ---------------------------------------------------------------------------
+
+def compute_sinclair_decomposition(
+    s_hh: np.ndarray,
+    s_hv: np.ndarray,
+    s_vv: np.ndarray,
+) -> np.ndarray:
+    """Compute Sinclair RGB composite: R=|HH-VV|, G=2|HV|, B=|HH+VV|."""
+    r = np.abs(s_hh - s_vv).astype(np.float32)
+    g = (2.0 * np.abs(s_hv)).astype(np.float32)
+    b = np.abs(s_hh + s_vv).astype(np.float32)
+    return np.stack([r, g, b], axis=0)
+
+
+def compute_pauli_decomposition(
+    s_hh: np.ndarray,
+    s_hv: np.ndarray,
+    s_vv: np.ndarray,
+) -> np.ndarray:
+    """Compute Pauli RGB composite:
+    R = |HH-VV| / sqrt(2) (Double-bounce)
+    G = sqrt(2) * |HV| (Volume)
+    B = |HH+VV| / sqrt(2) (Surface)
+    """
+    inv_sqrt2 = 1.0 / np.sqrt(2.0)
+    r = (np.abs(s_hh - s_vv) * inv_sqrt2).astype(np.float32)
+    g = (np.abs(s_hv) * np.sqrt(2.0)).astype(np.float32)
+    b = (np.abs(s_hh + s_vv) * inv_sqrt2).astype(np.float32)
+    return np.stack([r, g, b], axis=0)
+
+
+def compute_freeman_durden_decomposition(
+    s_hh: np.ndarray,
+    s_hv: np.ndarray,
+    s_vv: np.ndarray,
+) -> np.ndarray:
+    """Compute Freeman-Durden physical scattering model (Surface, Double-bounce, Volume)."""
+    p_v = (8.0 / 3.0) * (np.abs(s_hv) ** 2)
+    c11 = np.maximum(np.abs(s_hh) ** 2 - p_v, 0.0)
+    c22 = np.maximum(np.abs(s_vv) ** 2 - p_v, 0.0)
+    r = np.sqrt(c11).astype(np.float32)
+    g = np.sqrt(p_v).astype(np.float32)
+    b = np.sqrt(c22).astype(np.float32)
+    return np.stack([r, g, b], axis=0)

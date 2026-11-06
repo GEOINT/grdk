@@ -51,12 +51,26 @@ if _QT_AVAILABLE:
 
         Connect to an ``ImageCanvas`` via ``connect_canvas()`` to receive
         live cursor position updates.
-
-        Parameters
-        ----------
-        parent : QWidget, optional
-            Parent widget.
         """
+
+        @staticmethod
+        def dd_to_dms(dd: float, is_lat: bool) -> str:
+            """Convert decimal degrees to Degrees Minutes Seconds (DMS)."""
+            hemi = ('N' if dd >= 0 else 'S') if is_lat else ('E' if dd >= 0 else 'W')
+            abs_dd = abs(dd)
+            deg = int(abs_dd)
+            rem = (abs_dd - deg) * 60.0
+            minute = int(rem)
+            sec = (rem - minute) * 60.0
+            return f"{deg}°{minute:02d}'{sec:04.1f}\"{hemi}"
+
+        def clear(self) -> None:
+            """Reset all coordinate and value labels."""
+            self._pixel_label.setText("Pixel: —")
+            self._geo_label.setText("")
+            self._value_label.setText("Value: —")
+            self._pending_row = None
+            self._pending_col = None
 
         _THROTTLE_MS = 33  # ~30 Hz max geolocation update rate
 

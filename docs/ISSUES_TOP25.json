@@ -1,0 +1,127 @@
+{
+  "ELT-01": {
+    "number": 19,
+    "title": "[ELT-01] Asynchronous background image ingestion with visual progress dialog and UI responsiveness",
+    "url": "https://github.com/GEOINT/grdk/issues/19"
+  },
+  "ELT-02": {
+    "number": 20,
+    "title": "[ELT-02] Add Close Image action to cleanly unload reader, clear canvas, and reset viewer state",
+    "url": "https://github.com/GEOINT/grdk/issues/20"
+  },
+  "ELT-03": {
+    "number": 21,
+    "title": "[ELT-03] Support arbitrary 3-band RGB color gun mapping for multi-band MSI/HSI imagery",
+    "url": "https://github.com/GEOINT/grdk/issues/21"
+  },
+  "ELT-04": {
+    "number": 22,
+    "title": "[ELT-04] Interactive spectral profile probe and reflectance/radiance curve viewer",
+    "url": "https://github.com/GEOINT/grdk/issues/22"
+  },
+  "ELT-05": {
+    "number": 23,
+    "title": "[ELT-05] Interactive dynamic range adjustment (DRA) and histogram stretch dialog",
+    "url": "https://github.com/GEOINT/grdk/issues/23"
+  },
+  "ELT-06": {
+    "number": 24,
+    "title": "[ELT-06] False-color RGB composite presets (Natural Color, CIR, SWIR Agriculture, Geology)",
+    "url": "https://github.com/GEOINT/grdk/issues/24"
+  },
+  "ELT-07": {
+    "number": 25,
+    "title": "[ELT-07] Geodetic mensuration tool for ground distance, azimuth/bearing, and polygon area",
+    "url": "https://github.com/GEOINT/grdk/issues/25"
+  },
+  "ELT-08": {
+    "number": 26,
+    "title": "[ELT-08] Interactive roaming magnifier loupe tool with selectable zoom ratios",
+    "url": "https://github.com/GEOINT/grdk/issues/26"
+  },
+  "ELT-09": {
+    "number": 27,
+    "title": "[ELT-09] Image rotation (North-up, 90/180/270, custom angle) and horizontal/vertical flip",
+    "url": "https://github.com/GEOINT/grdk/issues/27"
+  },
+  "ELT-10": {
+    "number": 28,
+    "title": "[ELT-10] Georeferenced image chip exporter to GeoTIFF, PNG with worldfile, and JPEG",
+    "url": "https://github.com/GEOINT/grdk/issues/28"
+  },
+  "ELT-11": {
+    "number": 29,
+    "title": "[ELT-11] Comprehensive pixel value, geographic coordinate (DD/DMS/MGRS), and radiometric HUD",
+    "url": "https://github.com/GEOINT/grdk/issues/29"
+  },
+  "ELT-12": {
+    "number": 30,
+    "title": "[ELT-12] Dynamic polarimetric decomposition engine (Pauli, Freeman-Durden, Sinclair RGB)",
+    "url": "https://github.com/GEOINT/grdk/issues/30"
+  },
+  "ELT-13": {
+    "number": 31,
+    "title": "[ELT-13] Spatial filtering and edge enhancement suite (Unsharp Mask, High-Pass, Sobel, Laplacian)",
+    "url": "https://github.com/GEOINT/grdk/issues/31"
+  },
+  "ELT-14": {
+    "number": 32,
+    "title": "[ELT-14] SAR spatial despeckle filters (Lee, Frost, Kuan, Gamma MAP, Median, Boxcar)",
+    "url": "https://github.com/GEOINT/grdk/issues/32"
+  },
+  "ELT-15": {
+    "number": 33,
+    "title": "[ELT-15] Overview mini-map locator dock with interactive viewport bounding box",
+    "url": "https://github.com/GEOINT/grdk/issues/33"
+  },
+  "ELT-16": {
+    "number": 34,
+    "title": "[ELT-16] Interactive split-screen curtain swipe divider between dual panes",
+    "url": "https://github.com/GEOINT/grdk/issues/34"
+  },
+  "ELT-17": {
+    "number": 35,
+    "title": "[ELT-17] Automated dual-pane flicker comparator with configurable frequency",
+    "url": "https://github.com/GEOINT/grdk/issues/35"
+  },
+  "ELT-18": {
+    "number": 36,
+    "title": "[ELT-18] Spectral index and band math calculator (NDVI, NDWI, NDBI, SAVI, custom ratios)",
+    "url": "https://github.com/GEOINT/grdk/issues/36"
+  },
+  "ELT-19": {
+    "number": 37,
+    "title": "[ELT-19] Real-time pan-sharpening fusion preview (Brovey, Simple Mean, IHS)",
+    "url": "https://github.com/GEOINT/grdk/issues/37"
+  },
+  "ELT-20": {
+    "number": 38,
+    "title": "[ELT-20] Synchronized conjugate dual cursors and crosshairs across dual panes",
+    "url": "https://github.com/GEOINT/grdk/issues/38"
+  },
+  "ELT-21": {
+    "number": 39,
+    "title": "[ELT-21] Dynamic graticule and geographic lat/lon and UTM coordinate grid overlay",
+    "url": "https://github.com/GEOINT/grdk/issues/39"
+  },
+  "ELT-22": {
+    "number": 40,
+    "title": "[ELT-22] Target bookmark and waypoint manager with geographic coordinates and notes",
+    "url": "https://github.com/GEOINT/grdk/issues/40"
+  },
+  "ELT-23": {
+    "number": 41,
+    "title": "[ELT-23] Vector markup and annotation layer (lines, polygons, arrows, text callouts)",
+    "url": "https://github.com/GEOINT/grdk/issues/41"
+  },
+  "ELT-24": {
+    "number": 42,
+    "title": "[ELT-24] Color inversion and negative display mode for shadow detail and film simulation",
+    "url": "https://github.com/GEOINT/grdk/issues/42"
+  },
+  "ELT-25": {
+    "number": 43,
+    "title": "[ELT-25] Expanded remote sensing and defense colormaps (Jet, Turbo, Magma, Plasma, Bone, Coolwarm, Seismic)",
+    "url": "https://github.com/GEOINT/grdk/issues/43"
+  }
+}

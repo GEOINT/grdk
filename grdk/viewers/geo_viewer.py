@@ -432,6 +432,11 @@ if _QT_AVAILABLE:
         # --- Public properties ---
 
         @property
+        def reader(self) -> Optional[Any]:
+            """Active ImageReader instance, or None if raw array or closed."""
+            return self._reader
+
+        @property
         def canvas(self) -> TiledImageCanvas:
             """The underlying image canvas."""
             return self._canvas
@@ -476,6 +481,25 @@ if _QT_AVAILABLE:
             return self._vector_overlay
 
         # --- Loading ---
+
+        def open_array(self, arr: np.ndarray) -> None:
+            """Display an in-memory numpy array directly."""
+            self._reader = None
+            self._geolocation = None
+            self._canvas.set_array(arr)
+
+        def close_image(self) -> None:
+            """Close the currently open image, release reader, and clear canvas."""
+            if self._reader is not None and hasattr(self._reader, "close"):
+                try:
+                    self._reader.close()
+                except Exception as e:
+                    _log.warning("Error closing reader: %s", e)
+            self._reader = None
+            self._geolocation = None
+            self._canvas.clear()
+            if hasattr(self, "_coord_bar") and self._coord_bar is not None:
+                self._coord_bar.clear()
 
         def open_file(self, filepath: str) -> None:
             """Open an image file with auto-detection.
