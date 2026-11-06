@@ -148,3 +148,4 @@ if _QT_AVAILABLE:
                     self.area_label.setText(f"Area: {area_m2/1_000_000.0:.3f} km²")
                 else:
                     self.area_label.setText(f"Area: {area_m2:.1f} m²")
+

@@ -2,20 +2,32 @@
 """
 PanSharpen - Panchromatic image fusion engine.
 
-Provides Brovey Transform, Component Substitution, and Mean Fusion
+Reuses GRDL fusion processors (BroveyPanSharpenTransform, SimpleMeanFusionTransform)
 to sharpen multispectral and hyperspectral imagery using high-resolution PAN.
 
 Author: Steven Siebert
 License: MIT License
 """
 
-from typing import Any, List, Optional
+from typing import Any, Optional
 import numpy as np
+
+# GRDL Processors
+from grdl.image_processing.fusion import (
+    BroveyPanSharpenTransform,
+    SimpleMeanFusionTransform,
+    brovey_pan_sharpen,
+    simple_mean_fusion as grdl_mean_fusion,
+)
 
 try:
     from PyQt6.QtWidgets import (
-        QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-        QPushButton, QMessageBox
+        QComboBox,
+        QDialog,
+        QHBoxLayout,
+        QLabel,
+        QPushButton,
+        QVBoxLayout,
     )
     _QT_AVAILABLE = True
 except ImportError:
@@ -23,34 +35,19 @@ except ImportError:
 
 
 def brovey_transform(pan: np.ndarray, ms: np.ndarray) -> np.ndarray:
-    """Brovey Transform Pan-sharpening:
-    F_i = MS_i * (PAN / mean(MS))
-    """
+    """Brovey Transform Pan-sharpening delegating to GRDL."""
     if ms.ndim != 3:
         raise ValueError("MS image must be 3D (C, H, W)")
     if pan.ndim != 2:
         raise ValueError("PAN image must be 2D (H, W)")
-
-    pan_f = pan.astype(np.float32)
-    ms_f = ms.astype(np.float32)
-
-    # Compute intensity as mean across all MS bands
-    intensity = np.mean(ms_f, axis=0)
-    eps = 1e-7
-    intensity[intensity == 0] = eps
-
-    ratio = pan_f / intensity
-    fused = ms_f * ratio[np.newaxis, :, :]
-    return fused
+    return brovey_pan_sharpen(pan, ms)
 
 
 def simple_mean_fusion(pan: np.ndarray, ms: np.ndarray) -> np.ndarray:
-    """Simple additive fusion: 0.5 * (PAN + MS_i)."""
+    """Simple additive fusion delegating to GRDL."""
     if ms.ndim != 3 or pan.ndim != 2:
         raise ValueError("MS must be (C, H, W) and PAN must be (H, W)")
-    pan_f = pan.astype(np.float32)
-    ms_f = ms.astype(np.float32)
-    return 0.5 * (pan_f[np.newaxis, :, :] + ms_f)
+    return grdl_mean_fusion(pan, ms, pan_weight=0.5)
 
 
 if _QT_AVAILABLE:

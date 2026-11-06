@@ -64,3 +64,4 @@ if _QT_AVAILABLE:
             self._visible = visible
             self.setVisible(visible)
             self.update()
+

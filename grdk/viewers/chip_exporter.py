@@ -80,3 +80,4 @@ def export_image_chip(
             f.write(data.tobytes())
 
     return output_path
+

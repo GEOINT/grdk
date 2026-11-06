@@ -126,3 +126,4 @@ if _QT_AVAILABLE:
                 target_col = int((mx / float(scaled.width())) * full_w)
                 target_row = int((my / float(scaled.height())) * full_h)
                 self.viewport_clicked.emit(target_row, target_col)
+

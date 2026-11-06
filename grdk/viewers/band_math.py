@@ -2,8 +2,9 @@
 """
 BandMath - Spectral index and band arithmetic engine.
 
-Computes common remote sensing indices (NDVI, NDWI, NDBI, SAVI) and
-arbitrary band math for multispectral and hyperspectral imagery.
+Reuses GRDL spectral image processor components (SpectralIndexTransform,
+compute_spectral_index) to calculate standard indices (NDVI, NDWI, NDBI,
+SAVI, RATIO) on multispectral and hyperspectral imagery.
 
 Author: Steven Siebert
 License: MIT License
@@ -12,74 +13,26 @@ License: MIT License
 from typing import Any, List, Optional
 import numpy as np
 
+# GRDL Spectral Processors
+from grdl.image_processing.spectral import (
+    SpectralIndexTransform,
+    compute_spectral_index,
+)
+
 try:
     from PyQt6.QtWidgets import (
-        QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-        QPushButton, QDoubleSpinBox, QMessageBox
+        QComboBox,
+        QDialog,
+        QDoubleSpinBox,
+        QHBoxLayout,
+        QLabel,
+        QMessageBox,
+        QPushButton,
+        QVBoxLayout,
     )
     _QT_AVAILABLE = True
 except ImportError:
     _QT_AVAILABLE = False
-
-
-def compute_spectral_index(
-    data: np.ndarray,
-    index_type: str = "NDVI",
-    nir_idx: int = 3,
-    red_idx: int = 2,
-    green_idx: int = 1,
-    swir_idx: int = 5,
-    savi_l: float = 0.5,
-) -> np.ndarray:
-    """Compute standard spectral index from a 3D (C, H, W) array."""
-    if data.ndim != 3:
-        raise ValueError("Data must be 3D (C, H, W) for spectral index calculation")
-
-    num_bands = data.shape[0]
-
-    def _get_band(idx: int) -> np.ndarray:
-        return data[min(idx, num_bands - 1)].astype(np.float32)
-
-    index_type = index_type.upper()
-    eps = 1e-7
-
-    if index_type == "NDVI":
-        nir = _get_band(nir_idx)
-        red = _get_band(red_idx)
-        denom = nir + red
-        denom[denom == 0] = eps
-        return (nir - red) / denom
-
-    elif index_type == "NDWI":
-        green = _get_band(green_idx)
-        nir = _get_band(nir_idx)
-        denom = green + nir
-        denom[denom == 0] = eps
-        return (green - nir) / denom
-
-    elif index_type == "NDBI":
-        swir = _get_band(swir_idx)
-        nir = _get_band(nir_idx)
-        denom = swir + nir
-        denom[denom == 0] = eps
-        return (swir - nir) / denom
-
-    elif index_type == "SAVI":
-        nir = _get_band(nir_idx)
-        red = _get_band(red_idx)
-        denom = nir + red + savi_l
-        denom[denom == 0] = eps
-        return ((nir - red) / denom) * (1.0 + savi_l)
-
-    elif index_type == "RATIO":
-        band_a = _get_band(nir_idx)
-        band_b = _get_band(red_idx)
-        denom = band_b.copy()
-        denom[denom == 0] = eps
-        return band_a / denom
-
-    else:
-        raise ValueError(f"Unknown spectral index type: {index_type}")
 
 
 if _QT_AVAILABLE:
@@ -102,7 +55,13 @@ if _QT_AVAILABLE:
             idx_row = QHBoxLayout()
             idx_row.addWidget(QLabel("Index:", self))
             self.index_combo = QComboBox(self)
-            self.index_combo.addItems(["NDVI (Vegetation)", "NDWI (Water)", "NDBI (Built-up)", "SAVI (Soil-Adjusted)", "Custom Ratio (A / B)"])
+            self.index_combo.addItems([
+                "NDVI (Vegetation)",
+                "NDWI (Water)",
+                "NDBI (Built-up)",
+                "SAVI (Soil-Adjusted)",
+                "Custom Ratio (A / B)",
+            ])
             self.index_combo.currentIndexChanged.connect(self._on_index_changed)
             idx_row.addWidget(self.index_combo)
             layout.addLayout(idx_row)

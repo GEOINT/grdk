@@ -114,3 +114,4 @@ if _QT_AVAILABLE:
             path, _ = QFileDialog.getOpenFileName(self, "Import Targets", "", "JSON (*.json)")
             if path:
                 self.import_bookmarks(path)
+

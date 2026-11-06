@@ -57,6 +57,7 @@ from grdk.viewers.vector_overlay import VectorOverlayLayer
 from grdk.viewers.geo_viewer import GeoImageViewer, open_any, create_geolocation
 from grdk.viewers.dual_viewer import DualGeoViewer, SyncController
 from grdk.viewers.main_window import ViewerMainWindow
+from grdk.viewers.macro_recorder import WorkflowMacroRecorder, WorkflowMacroDialog
 
 
 def show(data, *, geolocation=None, title=None, block=True):

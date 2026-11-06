@@ -98,3 +98,4 @@ if _QT_AVAILABLE:
                     painter.drawRect(int(pts[-1].x()), int(pts[-1].y() - 20), len(item.label) * 8 + 10, 20)
                     painter.setPen(QColor(255, 255, 255))
                     painter.drawText(int(pts[-1].x() + 5), int(pts[-1].y() - 5), item.label)
+

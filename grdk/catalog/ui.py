@@ -226,6 +226,7 @@ class CatalogRunnerDialog(QDialog):
         manager: CatalogManager,
         source_array_provider: Callable[[], Optional[Any]],
         execution_callback: Callable[[Any, str], None],
+        macro_recorder: Optional[Any] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -235,6 +236,7 @@ class CatalogRunnerDialog(QDialog):
         self._manager = manager
         self._source_array_provider = source_array_provider
         self._execution_callback = execution_callback
+        self._macro_recorder = macro_recorder
 
         self._artifacts: list[Any] = []
         self._param_inputs: dict[str, Any] = {}
@@ -488,6 +490,14 @@ class CatalogRunnerDialog(QDialog):
                 executor = WorkflowExecutor(wf)
                 res = executor.execute(source_arr)
                 result_data = res.result
+
+            if self._macro_recorder is not None:
+                try:
+                    if art.artifact_type == "grdl_processor":
+                        proc_name = art.processor_class or art.name
+                        self._macro_recorder.add_step(proc_name, params=params)
+                except Exception as ex:
+                    _log.warning("Could not record macro step: %s", ex)
 
             self._execution_callback(result_data, art.name)
             self._status_label.setText(f"Finished {art.name} successfully.")

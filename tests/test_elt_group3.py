@@ -149,3 +149,4 @@ class TestDualPaneComparative:
         viewer.set_cursor_sync(True)
         assert viewer.is_cursor_sync is True
         viewer._on_pane_cursor_hover(pane=0, row=50, col=50)
+

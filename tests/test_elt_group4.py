@@ -191,3 +191,4 @@ class TestVectorMarkup:
         assert len(layer.items) == 1
         assert layer.items[0].label == "SAM Site A"
         assert layer.items[0].shape_type == "callout"
+

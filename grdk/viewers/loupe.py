@@ -96,3 +96,4 @@ if _QT_AVAILABLE:
             painter.setPen(QPen(QColor(255, 0, 0, 180), 1))
             painter.drawLine(int(radius), int(radius - 10), int(radius), int(radius + 10))
             painter.drawLine(int(radius - 10), int(radius), int(radius + 10), int(radius))
+

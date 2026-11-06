@@ -2,8 +2,10 @@
 """
 Filters - Spatial filtering and SAR despeckle processing engine.
 
-Provides edge enhancement, sharpening, and standard radar speckle reduction
-filters (Lee, Frost, Kuan, Gamma MAP, Median, Boxcar).
+Reuses GRDL image processor components (SobelFilter, LaplacianFilter,
+UnsharpMaskFilter, HighPassFilter, GaussianFilter, MeanFilter, MedianFilter,
+LeeFilter, FrostFilter, KuanFilter, BoxcarFilter) for in-viewer exploitation
+and automated execution.
 
 Author: Steven Siebert
 License: MIT License
@@ -11,12 +13,32 @@ License: MIT License
 
 from typing import Any, Optional
 import numpy as np
-from scipy import ndimage
+
+# GRDL Processors
+from grdl.image_processing.filters.edge import (
+    HighPassFilter,
+    LaplacianFilter,
+    SobelFilter,
+    UnsharpMaskFilter,
+)
+from grdl.image_processing.filters.linear import GaussianFilter, MeanFilter
+from grdl.image_processing.filters.rank import MedianFilter
+from grdl.image_processing.filters.sar_speckle import (
+    BoxcarFilter,
+    FrostFilter,
+    KuanFilter,
+)
+from grdl.image_processing.filters.standard_lee import LeeFilter
 
 try:
     from PyQt6.QtWidgets import (
-        QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-        QSpinBox, QDoubleSpinBox, QPushButton, QMessageBox
+        QComboBox,
+        QDialog,
+        QHBoxLayout,
+        QLabel,
+        QPushButton,
+        QSpinBox,
+        QVBoxLayout,
     )
     _QT_AVAILABLE = True
 except ImportError:
@@ -28,47 +50,28 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def gaussian_blur(arr: np.ndarray, sigma: float = 1.0) -> np.ndarray:
-    """Apply Gaussian smoothing filter."""
-    if arr.ndim == 3:
-        out = np.empty_like(arr)
-        for i in range(arr.shape[0]):
-            out[i] = ndimage.gaussian_filter(arr[i], sigma=sigma)
-        return out
-    return ndimage.gaussian_filter(arr, sigma=sigma)
+    """Apply Gaussian smoothing filter via GRDL GaussianFilter."""
+    return GaussianFilter(sigma=float(sigma)).apply(arr)
 
 
 def sharpen_unsharp_mask(arr: np.ndarray, amount: float = 1.5, radius: float = 1.0) -> np.ndarray:
-    """Sharpen image using unsharp masking: arr + amount * (arr - blurred)."""
-    blurred = gaussian_blur(arr, sigma=radius)
-    sharpened = arr + amount * (arr - blurred)
-    return sharpened.astype(arr.dtype)
+    """Sharpen image using unsharp masking via GRDL UnsharpMaskFilter."""
+    return UnsharpMaskFilter(radius=float(radius), amount=float(amount)).apply(arr)
 
 
 def sobel_gradient(arr: np.ndarray) -> np.ndarray:
-    """Compute gradient magnitude using 3x3 Sobel operators."""
-    if arr.ndim == 3:
-        out = np.empty_like(arr)
-        for i in range(arr.shape[0]):
-            out[i] = sobel_gradient(arr[i])
-        return out
-    gx = ndimage.sobel(arr, axis=1)
-    gy = ndimage.sobel(arr, axis=0)
-    return np.hypot(gx, gy).astype(np.float32)
+    """Compute gradient magnitude using GRDL SobelFilter."""
+    return SobelFilter(output_type="magnitude").apply(arr)
 
 
 def laplacian_edge(arr: np.ndarray) -> np.ndarray:
-    """Compute second-derivative edge detector via discrete Laplacian."""
-    if arr.ndim == 3:
-        out = np.empty_like(arr)
-        for i in range(arr.shape[0]):
-            out[i] = laplacian_edge(arr[i])
-        return out
-    return np.abs(ndimage.laplace(arr)).astype(np.float32)
+    """Compute second-derivative edge detector via GRDL LaplacianFilter."""
+    return LaplacianFilter().apply(arr)
 
 
 def high_pass_filter(arr: np.ndarray, cutoff: float = 2.0) -> np.ndarray:
-    """High-pass filter retaining fine spatial details: arr - gaussian_blur(arr)."""
-    return arr - gaussian_blur(arr, sigma=cutoff)
+    """High-pass filter retaining fine spatial details via GRDL HighPassFilter."""
+    return HighPassFilter(cutoff=float(cutoff)).apply(arr)
 
 
 # ---------------------------------------------------------------------------
@@ -76,59 +79,29 @@ def high_pass_filter(arr: np.ndarray, cutoff: float = 2.0) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def boxcar_filter(arr: np.ndarray, window_size: int = 3) -> np.ndarray:
-    """Simple moving average filter."""
-    return ndimage.uniform_filter(arr, size=window_size)
+    """Simple moving average filter via GRDL BoxcarFilter."""
+    return BoxcarFilter(window_size=int(window_size)).apply(arr)
 
 
 def median_filter(arr: np.ndarray, window_size: int = 3) -> np.ndarray:
-    """Non-linear median rank filter."""
-    return ndimage.median_filter(arr, size=window_size)
+    """Non-linear median rank filter via GRDL MedianFilter."""
+    return MedianFilter(kernel_size=int(window_size)).apply(arr)
 
 
 def lee_filter(arr: np.ndarray, window_size: int = 5, num_looks: int = 1) -> np.ndarray:
-    """Lee adaptive speckle filter based on local coefficient of variation."""
-    img = arr.astype(np.float64)
-    local_mean = ndimage.uniform_filter(img, size=window_size)
-    local_sq_mean = ndimage.uniform_filter(img ** 2, size=window_size)
-    local_var = np.maximum(0.0, local_sq_mean - local_mean ** 2)
-
-    # Noise variance estimate for multiplicative speckle
-    noise_var = (local_mean ** 2) / float(max(1, num_looks))
-    weight = local_var / np.maximum(1e-7, local_var + noise_var)
-    weight = np.clip(weight, 0.0, 1.0)
-
-    filtered = local_mean + weight * (img - local_mean)
-    return filtered.astype(arr.dtype)
+    """Lee adaptive speckle filter via GRDL LeeFilter."""
+    enl = float(max(1, num_looks))
+    return LeeFilter(kernel_size=int(window_size), enl=enl).apply(arr).astype(arr.dtype)
 
 
 def kuan_filter(arr: np.ndarray, window_size: int = 5, num_looks: int = 1) -> np.ndarray:
-    """Kuan adaptive speckle filter (exact MMSE formulation)."""
-    img = arr.astype(np.float64)
-    local_mean = ndimage.uniform_filter(img, size=window_size)
-    local_sq_mean = ndimage.uniform_filter(img ** 2, size=window_size)
-    local_var = np.maximum(0.0, local_sq_mean - local_mean ** 2)
-
-    cu = 1.0 / np.sqrt(float(max(1, num_looks)))
-    ci = np.sqrt(local_var) / np.maximum(1e-7, local_mean)
-    weight = np.maximum(0.0, 1.0 - (cu ** 2) / np.maximum(1e-7, ci ** 2)) / (1.0 + cu ** 2)
-    weight = np.clip(weight, 0.0, 1.0)
-
-    filtered = local_mean + weight * (img - local_mean)
-    return filtered.astype(arr.dtype)
+    """Kuan adaptive speckle filter via GRDL KuanFilter."""
+    return KuanFilter(window_size=int(window_size), num_looks=int(num_looks)).apply(arr)
 
 
 def frost_filter(arr: np.ndarray, window_size: int = 5, damping_factor: float = 2.0) -> np.ndarray:
-    """Frost exponentially damped adaptive speckle filter."""
-    img = arr.astype(np.float64)
-    local_mean = ndimage.uniform_filter(img, size=window_size)
-    local_sq_mean = ndimage.uniform_filter(img ** 2, size=window_size)
-    local_var = np.maximum(0.0, local_sq_mean - local_mean ** 2)
-
-    ci = np.sqrt(local_var) / np.maximum(1e-7, local_mean)
-    # Exponential weighting matrix
-    weight = np.exp(-damping_factor * ci)
-    filtered = local_mean * weight + img * (1.0 - weight)
-    return filtered.astype(arr.dtype)
+    """Frost exponentially damped adaptive speckle filter via GRDL FrostFilter."""
+    return FrostFilter(window_size=int(window_size), damping_factor=float(damping_factor)).apply(arr)
 
 
 if _QT_AVAILABLE:
@@ -161,9 +134,9 @@ if _QT_AVAILABLE:
             layout.addLayout(row_f)
 
             row_w = QHBoxLayout()
-            row_w.addWidget(QLabel("Window Size:", self))
+            row_w.addWidget(QLabel("Window Size / Radius:", self))
             self.win_spin = QSpinBox(self)
-            self.win_spin.setRange(3, 15)
+            self.win_spin.setRange(1, 31)
             self.win_spin.setSingleStep(2)
             self.win_spin.setValue(5)
             row_w.addWidget(self.win_spin)

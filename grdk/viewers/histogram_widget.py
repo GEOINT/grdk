@@ -194,3 +194,4 @@ if _QT_AVAILABLE:
 
             self.plot.set_percentiles(low, high)
             self.stretch_changed.emit(low, high)
+

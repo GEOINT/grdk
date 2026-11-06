@@ -111,3 +111,4 @@ class TestBandMathAndIndices:
         ndwi = compute_spectral_index(cube, index_type="NDWI", green_idx=1, nir_idx=3)
         # NDWI = (0.5 - 0.1) / (0.5 + 0.1) = 0.4 / 0.6 = 0.6667
         assert np.allclose(ndwi, 0.6667, atol=1e-3)
+

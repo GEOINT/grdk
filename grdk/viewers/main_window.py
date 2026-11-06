@@ -35,6 +35,7 @@ import json
 import logging
 import sys
 from typing import Any, Optional
+import numpy as np
 
 _log = logging.getLogger("grdk.main_window")
 
@@ -305,6 +306,10 @@ if _QT_AVAILABLE:
             self._catalog_sync_worker = CatalogSyncWorker(self._catalog_manager)
             self._catalog_sync_worker.sync_finished.connect(self._on_catalog_sync_finished)
             self._catalog_sync_worker.start()
+
+            # In-memory Workflow Macro Recorder
+            from grdk.viewers.macro_recorder import WorkflowMacroRecorder
+            self._macro_recorder = WorkflowMacroRecorder()
 
             # Polarimetric decomposition worker (Pauli / H-Alpha)
             self._pauli_worker: Optional[Any] = None
@@ -719,6 +724,26 @@ if _QT_AVAILABLE:
             self._reload_catalogs_action = QAction("Re&load Catalogs", self)
             self._reload_catalogs_action.triggered.connect(self._on_reload_catalogs)
 
+            # Processing & Macro Actions
+            self._macro_action = QAction("Processing Workflow (&Macro)...", self)
+            self._macro_action.setShortcut(QKeySequence("Ctrl+Shift+M"))
+            self._macro_action.triggered.connect(self._on_show_macro_dialog)
+
+            self._filter_action = QAction("&Spatial & SAR Filters...", self)
+            self._filter_action.setEnabled(False)
+            self._filter_action.triggered.connect(self._on_run_filter_dialog)
+
+            self._pan_sharpen_action = QAction("&Pan-Sharpening Fusion...", self)
+            self._pan_sharpen_action.setEnabled(False)
+            self._pan_sharpen_action.triggered.connect(self._on_run_pan_sharpen_dialog)
+
+            self._band_math_action = QAction("Spectral &Index & Band Math...", self)
+            self._band_math_action.setEnabled(False)
+            self._band_math_action.triggered.connect(self._on_run_band_math_dialog)
+
+            self._open_orange_action = QAction("&Open in Orange Canvas...", self)
+            self._open_orange_action.triggered.connect(self._on_open_orange_canvas)
+
             self._draw_polygon_action = QAction("✎", self)
             self._draw_polygon_action.setCheckable(True)
             self._draw_polygon_action.setShortcut("D")
@@ -798,6 +823,15 @@ if _QT_AVAILABLE:
             catalog_menu.addSeparator()
             catalog_menu.addAction(self._manage_catalogs_action)
             catalog_menu.addAction(self._reload_catalogs_action)
+
+            tools_menu.addSeparator()
+            proc_menu = tools_menu.addMenu("&Image Processing")
+            proc_menu.addAction(self._filter_action)
+            proc_menu.addAction(self._pan_sharpen_action)
+            proc_menu.addAction(self._band_math_action)
+            proc_menu.addSeparator()
+            proc_menu.addAction(self._macro_action)
+            proc_menu.addAction(self._open_orange_action)
 
             view_menu = self.menuBar().addMenu("&View")
             view_menu.addAction(self._fit_action)
@@ -1648,6 +1682,9 @@ if _QT_AVAILABLE:
                 )
             )
             self._run_catalog_action.setEnabled(has_active_data)
+            self._filter_action.setEnabled(has_active_data)
+            self._pan_sharpen_action.setEnabled(has_active_data)
+            self._band_math_action.setEnabled(has_active_data)
 
         # --- Pauli / H-Alpha Decomposition ---
 
@@ -2746,6 +2783,7 @@ if _QT_AVAILABLE:
                 manager=self._catalog_manager,
                 source_array_provider=_get_active_array,
                 execution_callback=self._on_catalog_result_ready,
+                macro_recorder=self._macro_recorder,
                 parent=self,
             )
             dlg.exec()
@@ -2811,6 +2849,177 @@ if _QT_AVAILABLE:
                 self.statusBar().showMessage(
                     f"Catalog: {artifact_name} replaced active pane (memory cleaned)"
                 )
+
+        def _get_active_source_array(self) -> Optional[np.ndarray]:
+            """Retrieve the active array or read the full chip from the active reader."""
+            active_v = self._viewer.active_viewer
+            if active_v is None:
+                return None
+            arr = self._get_source_array(active_v)
+            if arr is not None:
+                return arr
+            reader = active_v._reader
+            if reader is not None:
+                try:
+                    shape = reader.get_shape()
+                    rows = shape[-2] if len(shape) >= 2 else shape[0]
+                    cols = shape[-1] if len(shape) >= 2 else shape[1]
+                    return reader.read_chip(0, rows, 0, cols)
+                except Exception as e:
+                    _log.error("Could not read chip from active reader: %s", e)
+                    return None
+            return None
+
+        def _on_show_macro_dialog(self) -> None:
+            """Open the Workflow Macro Dialog to inspect, execute, export, or open in Orange."""
+            from grdk.viewers.macro_recorder import WorkflowMacroDialog
+            dlg = WorkflowMacroDialog(
+                self._macro_recorder,
+                source_provider=self._get_active_source_array,
+                parent=self,
+            )
+            dlg.macro_executed.connect(self._on_catalog_result_ready)
+            dlg.exec()
+
+        def _on_open_orange_canvas(self) -> None:
+            """Export the current macro and open it in GRDK Orange Canvas."""
+            try:
+                self._macro_recorder.open_in_orange_canvas()
+                self.statusBar().showMessage("Orange Canvas launched with current workflow macro", 5000)
+            except Exception as e:
+                QMessageBox.critical(self, "Launch Error", f"Could not launch Orange Canvas:\n{e}")
+
+        def _on_run_filter_dialog(self) -> None:
+            """Open filter dialog and execute selected filter via grdl-runtime."""
+            from grdk.viewers.filters import ImageFilterDialog
+            from grdl_rt.execution.workflow import ProcessingStep, WorkflowDefinition
+            from grdl_rt.execution.dag_executor import DAGExecutor
+
+            arr = self._get_active_source_array()
+            if arr is None:
+                QMessageBox.warning(self, "No Image Loaded", "Please load an image before applying filters.")
+                return
+
+            dlg = ImageFilterDialog(self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            f_type = dlg.filter_combo.currentText()
+            win = dlg.win_spin.value()
+
+            if "Sharpen" in f_type:
+                proc_name = "grdl.image_processing.filters.edge.UnsharpMaskFilter"
+                params = {"radius": float(win) / 2.0, "amount": 1.5}
+            elif "Gaussian" in f_type:
+                proc_name = "grdl.image_processing.filters.linear.GaussianFilter"
+                params = {"sigma": float(win) / 3.0}
+            elif "Sobel" in f_type:
+                proc_name = "grdl.image_processing.filters.edge.SobelFilter"
+                params = {"output_type": "magnitude"}
+            elif "Laplacian" in f_type:
+                proc_name = "grdl.image_processing.filters.edge.LaplacianFilter"
+                params = {}
+            elif "Lee" in f_type:
+                proc_name = "grdl.image_processing.filters.standard_lee.LeeFilter"
+                params = {"kernel_size": int(win)}
+            elif "Frost" in f_type:
+                proc_name = "grdl.image_processing.filters.sar_speckle.FrostFilter"
+                params = {"window_size": int(win), "damping_factor": 2.0}
+            elif "Kuan" in f_type:
+                proc_name = "grdl.image_processing.filters.sar_speckle.KuanFilter"
+                params = {"window_size": int(win), "num_looks": 1}
+            elif "Median" in f_type:
+                proc_name = "grdl.image_processing.filters.rank.MedianFilter"
+                params = {"kernel_size": int(win)}
+            else:
+                proc_name = "grdl.image_processing.filters.sar_speckle.BoxcarFilter"
+                params = {"window_size": int(win)}
+
+            self.statusBar().showMessage(f"Executing {f_type} via grdl-runtime...")
+            try:
+                step = ProcessingStep(id=f"step_{len(self._macro_recorder.steps) + 1}", processor_name=proc_name, params=params)
+                wf = WorkflowDefinition(name=f"run_{step.id}", steps=[step])
+                executor = DAGExecutor(wf)
+                res = executor.execute(arr)
+                self._macro_recorder.add_step(proc_name, params=params)
+                self._on_catalog_result_ready(res.result, f"Filter: {f_type}")
+            except Exception as e:
+                _log.error("Filter execution failed: %s", e, exc_info=True)
+                QMessageBox.critical(self, "Filter Error", f"Failed to execute filter:\n{e}")
+
+        def _on_run_pan_sharpen_dialog(self) -> None:
+            """Open pan-sharpen dialog and execute fusion via grdl-runtime."""
+            from grdk.viewers.pan_sharpen import PanSharpenDialog
+            from grdl_rt.execution.workflow import ProcessingStep, WorkflowDefinition
+            from grdl_rt.execution.dag_executor import DAGExecutor
+
+            arr = self._get_active_source_array()
+            if arr is None:
+                QMessageBox.warning(self, "No Image Loaded", "Please load an image before applying pan-sharpening.")
+                return
+
+            dlg = PanSharpenDialog(self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            method = dlg.method_combo.currentText()
+            if "Brovey" in method:
+                proc_name = "grdl.image_processing.fusion.pansharpen.BroveyPanSharpenTransform"
+                params = {"pan_weight": 1.0}
+            else:
+                proc_name = "grdl.image_processing.fusion.pansharpen.SimpleMeanFusionTransform"
+                params = {"pan_weight": 0.5}
+
+            self.statusBar().showMessage(f"Executing {method} via grdl-runtime...")
+            try:
+                step = ProcessingStep(id=f"step_{len(self._macro_recorder.steps) + 1}", processor_name=proc_name, params=params)
+                wf = WorkflowDefinition(name=f"run_{step.id}", steps=[step])
+                executor = DAGExecutor(wf)
+                res = executor.execute(arr)
+                self._macro_recorder.add_step(proc_name, params=params)
+                self._on_catalog_result_ready(res.result, f"Pan-Sharpen: {method}")
+            except Exception as e:
+                _log.error("Pan-sharpening failed: %s", e, exc_info=True)
+                QMessageBox.critical(self, "Pan-Sharpening Error", f"Failed to execute fusion:\n{e}")
+
+        def _on_run_band_math_dialog(self) -> None:
+            """Open spectral index dialog and execute calculation via grdl-runtime."""
+            from grdk.viewers.band_math import BandMathDialog
+            from grdl_rt.execution.workflow import ProcessingStep, WorkflowDefinition
+            from grdl_rt.execution.dag_executor import DAGExecutor
+
+            arr = self._get_active_source_array()
+            if arr is None or arr.ndim != 3:
+                QMessageBox.warning(self, "Multi-Band Required", "Spectral indices and band math require a 3D multi-band or hyperspectral image.")
+                return
+
+            band_count = arr.shape[0]
+            band_names = [f"Band {i + 1}" for i in range(band_count)]
+            dlg = BandMathDialog(band_names, self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            proc_name = "grdl.image_processing.spectral.indices.SpectralIndexTransform"
+            params = {
+                "index_type": dlg.selected_index,
+                "nir_idx": dlg.selected_band_a,
+                "red_idx": dlg.selected_band_b,
+                "green_idx": dlg.selected_band_a,
+                "swir_idx": dlg.selected_band_a,
+                "savi_l": 0.5,
+            }
+
+            self.statusBar().showMessage(f"Executing {dlg.selected_index} via grdl-runtime...")
+            try:
+                step = ProcessingStep(id=f"step_{len(self._macro_recorder.steps) + 1}", processor_name=proc_name, params=params)
+                wf = WorkflowDefinition(name=f"run_{step.id}", steps=[step])
+                executor = DAGExecutor(wf)
+                res = executor.execute(arr)
+                self._macro_recorder.add_step(proc_name, params=params)
+                self._on_catalog_result_ready(res.result, f"Spectral Index: {dlg.selected_index}")
+            except Exception as e:
+                _log.error("Band math failed: %s", e, exc_info=True)
+                QMessageBox.critical(self, "Band Math Error", f"Failed to execute spectral index:\n{e}")
 
         def _on_manage_catalogs(self) -> None:
             """Open the Catalog Management configuration dialog."""
